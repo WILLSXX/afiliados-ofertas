@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ofertas-automaticas
+  cancel-in-progress: true
+
 jobs:
   ofertas:
     runs-on: ubuntu-latest
@@ -44,5 +48,15 @@ jobs:
             ofertas-mercadolivre.md
             ofertas-mercadolivre.json
           if-no-files-found: error
+          retention-days: 7
       - name: Buscar ofertas da Shopee
         run: node src/index.mjs
+      - name: Guardar relatório Shopee
+        uses: actions/upload-artifact@v4
+        with:
+          name: ofertas-shopee
+          path: |
+            ofertas-shopee.md
+            ofertas-shopee.json
+          if-no-files-found: error
+          retention-days: 7
