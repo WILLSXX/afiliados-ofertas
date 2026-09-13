@@ -18,17 +18,22 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       KEYWORDS: ssd,memoria ram,monitor gamer,fone bluetooth,roteador,teclado mecanico
+      ML_KEYWORDS: ssd,memoria ram,monitor gamer,fone bluetooth,roteador,teclado mecanico
       MIN_DISCOUNT: 20
       MIN_RATING: 4.5
       MIN_SALES: 50
       MAX_OFFERS: 5
+      ML_MIN_DISCOUNT: 15
+      ML_MAX_OFFERS: 10
       SUB_ID: telegram,ofertas,tech
     steps:
       - name: Baixar projeto
         uses: actions/checkout@v4
-      - name: Executar motor de ofertas
+      - name: Preparar Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Buscar ofertas
+      - name: Descobrir candidatos no Mercado Livre
+        run: node src/run-mercadolivre.mjs
+      - name: Buscar ofertas da Shopee
         run: node src/index.mjs
