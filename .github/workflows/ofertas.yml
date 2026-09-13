@@ -32,7 +32,7 @@ jobs:
       - name: Preparar Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
       - name: Descobrir candidatos no Mercado Livre
         run: node src/run-mercadolivre.mjs
       - name: Guardar relatório Mercado Livre
