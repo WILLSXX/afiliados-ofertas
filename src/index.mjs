@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 
 const API_URL = 'https://open-api.affiliate.shopee.com.br/graphql';
 
@@ -72,7 +73,45 @@ function formatOffer(p) {
   const discount = Math.round(Number(p.priceDiscountRate || 0) * 100);
   const commission = (Number(p.commissionRate || 0) * 100).toFixed(1);
   const price = money(p.priceMin);
-  return `🔥 ${p.productName}\n\n💰 ${price}  |  ${discount}% OFF\n⭐ ${Number(p.ratingStar || 0).toFixed(1)}  |  🛒 ${Number(p.sales || 0)} vendas\n💵 Comissão estimada: ${commission}%\n\n🛒 COMPRAR AGORA:\n${p.offerLink}\n\n⚠️ Preço e estoque podem mudar sem aviso.`;
+  const subId = subIds.length ? `\n🏷️ Sub-ID: ${subIds.join('/')}` : '';
+  return `🔥 ${p.productName}\n\n💰 ${price}  |  ${discount}% OFF\n⭐ ${Number(p.ratingStar || 0).toFixed(1)}  |  🛒 ${Number(p.sales || 0)} vendas\n💵 Comissão estimada: ${commission}%${subId}\n\n🛒 COMPRAR AGORA:\n${p.offerLink}\n\n⚠️ Preço e estoque podem mudar sem aviso.`;
+}
+
+function buildMarkdown(offers, errors) {
+  const now = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  const lines = [
+    '# Ofertas Shopee',
+    '',
+    `Atualizado em: ${now}`,
+    '',
+    `Filtros: ${MIN_DISCOUNT}% OFF | nota >= ${MIN_RATING} | vendas >= ${MIN_SALES} | máximo ${MAX_OFFERS}`,
+    ''
+  ];
+
+  if (errors.length) {
+    lines.push('## Diagnóstico', '', ...errors.map(error => `- ${error}`), '');
+  }
+
+  if (!offers.length) {
+    lines.push(env.SHOPEE_APP_ID && env.SHOPEE_SECRET ? 'Nenhuma oferta atingiu os filtros atuais.' : 'Credenciais Shopee ainda não configuradas.');
+    return lines.join('\n');
+  }
+
+  offers.forEach((offer, index) => {
+    lines.push(`## ${index + 1}. ${offer.productName}`);
+    lines.push('');
+    lines.push(`- **Preço:** ${money(offer.priceMin)}`);
+    lines.push(`- **Desconto:** ${Math.round(Number(offer.priceDiscountRate || 0) * 100)}%`);
+    lines.push(`- **Nota:** ${Number(offer.ratingStar || 0).toFixed(1)}`);
+    lines.push(`- **Vendas:** ${Number(offer.sales || 0)}`);
+    lines.push(`- **Comissão:** ${(Number(offer.commissionRate || 0) * 100).toFixed(1)}%`);
+    lines.push(`- **Pontuação:** ${offer.score}/100`);
+    lines.push(`- **Link afiliado:** ${offer.offerLink}`);
+    lines.push('');
+    lines.push('**Mensagem pronta:**', '', '```text', formatOffer(offer), '```', '', '---', '');
+  });
+
+  return lines.join('\n');
 }
 
 async function publishTelegram(text) {
@@ -89,19 +128,26 @@ async function publishTelegram(text) {
 
 async function main() {
   console.log(`Iniciando busca: ${keywords.join(', ')}`);
+  const errors = [];
+
   if (!env.SHOPEE_APP_ID || !env.SHOPEE_SECRET) {
+    const message = 'SHOPEE_APP_ID/SHOPEE_SECRET ainda não configurados.';
+    errors.push(message);
     console.log('MODO CONFIGURAÇÃO: credenciais Shopee ainda não configuradas.');
     console.log('Quando a Shopee liberar App ID + Secret, basta adicioná-los aos Secrets do GitHub.');
-    return;
   }
 
   const all = [];
-  for (const keyword of keywords) {
-    try {
-      const products = await getProducts(keyword);
-      for (const p of products) if (eligible(p)) all.push({ ...p, keyword, score: score(p) });
-    } catch (error) {
-      console.error(`Falha em ${keyword}:`, error.message);
+  if (env.SHOPEE_APP_ID && env.SHOPEE_SECRET) {
+    for (const keyword of keywords) {
+      try {
+        const products = await getProducts(keyword);
+        for (const p of products) if (eligible(p)) all.push({ ...p, keyword, score: score(p) });
+      } catch (error) {
+        const message = `Falha em ${keyword}: ${error.message}`;
+        errors.push(message);
+        console.error(message);
+      }
     }
   }
 
@@ -111,6 +157,38 @@ async function main() {
 
   console.log(`Ofertas elegíveis: ${unique.length}`);
   for (const p of unique) console.log(`\n${formatOffer(p)}`);
+
+  fs.writeFileSync('ofertas-shopee.md', buildMarkdown(unique, errors), 'utf8');
+  fs.writeFileSync('ofertas-shopee.json', JSON.stringify({ generatedAt: new Date().toISOString(), authenticated: Boolean(env.SHOPEE_APP_ID && env.SHOPEE_SECRET), errors, offers: unique }, null, 2), 'utf8');
+
+  const summary = env.GITHUB_STEP_SUMMARY;
+  if (summary) {
+    const now = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+    const summaryLines = [
+      '# 🛍️ Ofertas Shopee',
+      '',
+      `Atualizado em: ${now}`,
+      '',
+      `**Status da API:** ${env.SHOPEE_APP_ID && env.SHOPEE_SECRET ? 'CONFIGURADA' : 'AGUARDANDO CREDENCIAIS'}`,
+      '',
+      unique.length ? `**${unique.length} ofertas elegíveis.**` : '**Nenhuma oferta elegível nesta execução.**',
+      ''
+    ];
+    if (errors.length) {
+      summaryLines.push('## Diagnóstico');
+      for (const error of errors) summaryLines.push(`- ${error}`);
+      summaryLines.push('');
+    }
+    for (const [index, offer] of unique.entries()) {
+      summaryLines.push(`## ${index + 1}. ${offer.productName}`);
+      summaryLines.push(`- 💰 **Preço:** ${money(offer.priceMin)} — **${Math.round(Number(offer.priceDiscountRate || 0) * 100)}% OFF**`);
+      summaryLines.push(`- ⭐ **Nota:** ${Number(offer.ratingStar || 0).toFixed(1)} | 🛒 **Vendas:** ${Number(offer.sales || 0)}`);
+      summaryLines.push(`- 💵 **Comissão estimada:** ${(Number(offer.commissionRate || 0) * 100).toFixed(1)}%`);
+      summaryLines.push(`- 🛒 [Abrir oferta](${offer.offerLink})`);
+      summaryLines.push('');
+    }
+    fs.appendFileSync(summary, summaryLines.join('\n') + '\n', 'utf8');
+  }
 
   if (unique.length && env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) {
     await publishTelegram(formatOffer(unique[0]));
