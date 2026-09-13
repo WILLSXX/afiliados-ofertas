@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Motor simples para descobrir e publicar ofertas de afiliados.",
   "scripts": {
-    "start": "node src/index.mjs"
+    "start": "node src/index.mjs",
+    "ml:oauth": "node scripts/ml-oauth.mjs"
   },
   "engines": {
     "node": ">=20"
