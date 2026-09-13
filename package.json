@@ -1,0 +1,13 @@
+{
+  "name": "afiliados-ofertas",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Motor simples para descobrir e publicar ofertas de afiliados.",
+  "scripts": {
+    "start": "node src/index.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
