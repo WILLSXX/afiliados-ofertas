@@ -3,6 +3,7 @@ const API = 'https://api.mercadolibre.com';
 const keywords = (env.ML_KEYWORDS || env.KEYWORDS || 'ssd,memoria ram,monitor gamer,fone bluetooth,roteador,teclado mecanico').split(',').map(s => s.trim()).filter(Boolean);
 const MAX = Number(env.ML_MAX_OFFERS || 10);
 const MIN_DISCOUNT = Number(env.ML_MIN_DISCOUNT || 15);
+const ACCESS_TOKEN = env.ML_ACCESS_TOKEN || '';
 
 function money(value) {
   const n = Number(value);
@@ -12,8 +13,15 @@ function money(value) {
 
 async function search(keyword) {
   const url = `${API}/sites/MLB/search?q=${encodeURIComponent(keyword)}&limit=50&sort=relevance`;
-  const response = await fetch(url, { headers: { Accept: 'application/json' } });
-  if (!response.ok) throw new Error(`Mercado Livre HTTP ${response.status}`);
+  const headers = { Accept: 'application/json' };
+  if (ACCESS_TOKEN) headers.Authorization = `Bearer ${ACCESS_TOKEN}`;
+
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    const suffix = body ? ` — ${body.slice(0, 180)}` : '';
+    throw new Error(`Mercado Livre HTTP ${response.status}${suffix}`);
+  }
   return response.json();
 }
 
@@ -45,11 +53,11 @@ function normalize(item, keyword) {
 }
 
 function score(item) {
-  const discount = Math.min(item.discount, 60);
-  const reputation = item.sellerReputation === '5_green' ? 15 : item.sellerReputation === '4_light_green' ? 10 : 5;
-  const stock = Number(item.availableQuantity || 0) > 0 ? 10 : 0;
-  const shipping = item.shipping === 'grátis' ? 10 : 0;
-  return Math.round(discount * 0.6 + reputation * 0.2 + stock * 0.1 + shipping * 0.1);
+  const discountPoints = Math.min(item.discount, 60);
+  const reputationPoints = item.sellerReputation === '5_green' ? 15 : item.sellerReputation === '4_light_green' ? 10 : 5;
+  const stockPoints = Number(item.availableQuantity || 0) > 0 ? 15 : 0;
+  const shippingPoints = item.shipping === 'grátis' ? 10 : 0;
+  return Math.round(Math.min(100, discountPoints + reputationPoints + stockPoints + shippingPoints));
 }
 
 function eligible(item) {
@@ -58,6 +66,12 @@ function eligible(item) {
 
 export async function discoverMercadoLivre() {
   const all = [];
+  const errors = [];
+
+  if (!ACCESS_TOKEN) {
+    errors.push('ML_ACCESS_TOKEN não configurado. A API do Mercado Livre está exigindo autorização para esta execução.');
+  }
+
   for (const keyword of keywords) {
     try {
       const result = await search(keyword);
@@ -66,7 +80,9 @@ export async function discoverMercadoLivre() {
         if (eligible(item)) all.push({ ...item, score: score(item) });
       }
     } catch (error) {
-      console.error(`Falha no Mercado Livre (${keyword}): ${error.message}`);
+      const message = `Falha no Mercado Livre (${keyword}): ${error.message}`;
+      errors.push(message);
+      console.error(message);
     }
   }
 
@@ -74,7 +90,7 @@ export async function discoverMercadoLivre() {
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX);
 
-  return unique;
+  return { offers: unique, errors, authenticated: Boolean(ACCESS_TOKEN) };
 }
 
 export function formatMercadoLivre(item) {
