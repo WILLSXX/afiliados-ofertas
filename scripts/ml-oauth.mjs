@@ -49,18 +49,19 @@ try {
   if (!response.ok) {
     console.error(`\nFalha HTTP ${response.status}.`);
     console.error(JSON.stringify(data, null, 2));
-    process.exitCode = 1;
-    return;
+  } else {
+    console.log('\nSUCESSO: autorização convertida em tokens.');
+    console.log('\nACCESS_TOKEN (temporário):');
+    console.log(data.access_token || '(não retornado)');
+    console.log('\nREFRESH_TOKEN (guardar com segurança):');
+    console.log(data.refresh_token || '(não retornado)');
+    console.log(`\nEXPIRA EM: ${data.expires_in ?? 'não informado'} segundos`);
+    console.log('\nPRÓXIMO PASSO: adicionar o token apropriado aos Secrets do GitHub.');
+    console.log('Não publique esses valores em issues, commits, prints ou mensagens.');
   }
-
-  console.log('\nSUCESSO: autorização convertida em tokens.');
-  console.log('\nACCESS_TOKEN (temporário):');
-  console.log(data.access_token || '(não retornado)');
-  console.log('\nREFRESH_TOKEN (guardar com segurança):');
-  console.log(data.refresh_token || '(não retornado)');
-  console.log(`\nEXPIRA EM: ${data.expires_in ?? 'não informado'} segundos`);
-  console.log('\nPRÓXIMO PASSO: adicionar o token apropriado aos Secrets do GitHub.');
-  console.log('Não publique esses valores em issues, commits, prints ou mensagens.');
+} catch (error) {
+  console.error(`\nErro: ${error.message}`);
+  process.exitCode = 1;
 } finally {
   rl.close();
 }
