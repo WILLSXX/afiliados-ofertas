@@ -2,7 +2,7 @@ import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 
 const APP_ID = '2338114927381205';
-const REDIRECT_URI = 'https://localhost.com/redirect';
+const REDIRECT_URI = process.env.ML_REDIRECT_URI || 'https://willsxx.github.io/afiliados-ofertas/oauth/callback';
 const TOKEN_URL = 'https://api.mercadolibre.com/oauth/token';
 
 const rl = readline.createInterface({ input, output });
