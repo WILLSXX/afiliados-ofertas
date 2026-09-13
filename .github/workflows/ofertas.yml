@@ -35,5 +35,13 @@ jobs:
           node-version: 20
       - name: Descobrir candidatos no Mercado Livre
         run: node src/run-mercadolivre.mjs
+      - name: Guardar relatório Mercado Livre
+        uses: actions/upload-artifact@v4
+        with:
+          name: ofertas-mercadolivre
+          path: |
+            ofertas-mercadolivre.md
+            ofertas-mercadolivre.json
+          if-no-files-found: error
       - name: Buscar ofertas da Shopee
         run: node src/index.mjs
