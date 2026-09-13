@@ -41,5 +41,31 @@ if (!offers.length) {
 fs.writeFileSync('ofertas-mercadolivre.md', lines.join('\n'), 'utf8');
 fs.writeFileSync('ofertas-mercadolivre.json', JSON.stringify({ generatedAt: new Date().toISOString(), offers }, null, 2), 'utf8');
 
+// Mostra um resumo diretamente na página da execução do GitHub Actions.
+const summary = process.env.GITHUB_STEP_SUMMARY;
+if (summary) {
+  const summaryLines = [
+    '# 🔎 Ofertas Mercado Livre',
+    '',
+    `Atualizado em: ${now}`,
+    '',
+    offers.length ? `**${offers.length} candidatos encontrados.**` : '**Nenhum candidato atingiu os filtros atuais.**',
+    ''
+  ];
+
+  for (const [index, offer] of offers.entries()) {
+    summaryLines.push(`## ${index + 1}. ${offer.title}`);
+    summaryLines.push(`- 💰 **Preço:** R$ ${offer.price.toFixed(2).replace('.', ',')}${offer.discount ? ` — **${offer.discount}% OFF**` : ''}`);
+    summaryLines.push(`- 🏪 **Vendedor:** ${offer.seller || 'Mercado Livre'}`);
+    summaryLines.push(`- ⭐ **Reputação:** ${offer.sellerReputation || 'não informado'}`);
+    summaryLines.push(`- 🚚 **Frete:** ${offer.shipping}`);
+    summaryLines.push(`- 🛒 [Abrir produto](${offer.permalink})`);
+    summaryLines.push('');
+  }
+
+  summaryLines.push('> ⚠️ Os links acima são links de produto. Gere o link de afiliado no Portal/Barra oficial antes de divulgar.');
+  fs.appendFileSync(summary, summaryLines.join('\n') + '\n', 'utf8');
+}
+
 console.log(`Mercado Livre: ${offers.length} candidatos encontrados.`);
 console.log('Arquivos gerados: ofertas-mercadolivre.md e ofertas-mercadolivre.json');
