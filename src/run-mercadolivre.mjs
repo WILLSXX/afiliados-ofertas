@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import { discoverMercadoLivre, formatMercadoLivre } from './mercadolivre.mjs';
 
-const offers = await discoverMercadoLivre();
+const result = await discoverMercadoLivre();
+const { offers, errors, authenticated } = result;
 const now = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
 
 const lines = [
@@ -9,12 +10,21 @@ const lines = [
   '',
   `Atualizado em: ${now}`,
   '',
+  `Status da API: ${authenticated ? 'AUTENTICADA' : 'AGUARDANDO ML_ACCESS_TOKEN'}`,
+  '',
   '> Estes são candidatos encontrados automaticamente. Antes de divulgar, gere o link de afiliado pelo Gerador de Links/Barra de Afiliados oficial do Mercado Livre.',
   ''
 ];
 
+if (errors.length) {
+  lines.push('## Diagnóstico');
+  lines.push('');
+  for (const error of errors) lines.push(`- ${error}`);
+  lines.push('');
+}
+
 if (!offers.length) {
-  lines.push('Nenhum candidato atingiu os filtros atuais.');
+  lines.push(authenticated ? 'Nenhum candidato atingiu os filtros atuais.' : 'Nenhum candidato foi processado porque a API precisa de autenticação.');
 } else {
   offers.forEach((offer, index) => {
     lines.push(`## ${index + 1}. ${offer.title}`);
@@ -39,9 +49,8 @@ if (!offers.length) {
 }
 
 fs.writeFileSync('ofertas-mercadolivre.md', lines.join('\n'), 'utf8');
-fs.writeFileSync('ofertas-mercadolivre.json', JSON.stringify({ generatedAt: new Date().toISOString(), offers }, null, 2), 'utf8');
+fs.writeFileSync('ofertas-mercadolivre.json', JSON.stringify({ generatedAt: new Date().toISOString(), authenticated, errors, offers }, null, 2), 'utf8');
 
-// Mostra um resumo diretamente na página da execução do GitHub Actions.
 const summary = process.env.GITHUB_STEP_SUMMARY;
 if (summary) {
   const summaryLines = [
@@ -49,9 +58,18 @@ if (summary) {
     '',
     `Atualizado em: ${now}`,
     '',
-    offers.length ? `**${offers.length} candidatos encontrados.**` : '**Nenhum candidato atingiu os filtros atuais.**',
+    `**Status da API:** ${authenticated ? 'AUTENTICADA' : 'AGUARDANDO ML_ACCESS_TOKEN'}`,
     ''
   ];
+
+  if (errors.length) {
+    summaryLines.push('## Diagnóstico');
+    for (const error of errors) summaryLines.push(`- ${error}`);
+    summaryLines.push('');
+  }
+
+  summaryLines.push(offers.length ? `**${offers.length} candidatos encontrados.**` : (authenticated ? '**Nenhum candidato atingiu os filtros atuais.**' : '**Nenhuma busca processada: falta autenticação da API.**'));
+  summaryLines.push('');
 
   for (const [index, offer] of offers.entries()) {
     summaryLines.push(`## ${index + 1}. ${offer.title}`);
@@ -68,4 +86,5 @@ if (summary) {
 }
 
 console.log(`Mercado Livre: ${offers.length} candidatos encontrados.`);
+if (errors.length) console.log(`Mercado Livre: ${errors.length} diagnóstico(s) registrado(s).`);
 console.log('Arquivos gerados: ofertas-mercadolivre.md e ofertas-mercadolivre.json');
