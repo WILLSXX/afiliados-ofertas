@@ -38,6 +38,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Diagnosticar API do Mercado Livre
+        run: node src/diagnose-mercadolivre.mjs
       - name: Descobrir candidatos no Mercado Livre
         run: node src/run-mercadolivre.mjs
       - name: Guardar relatório Mercado Livre
