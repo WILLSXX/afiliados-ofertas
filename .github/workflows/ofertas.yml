@@ -23,13 +23,16 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       KEYWORDS: ssd,memoria ram,monitor gamer,fone bluetooth,roteador,teclado mecanico
-      ML_KEYWORDS: ssd,memoria ram,monitor gamer,fone bluetooth,roteador,teclado mecanico
+      ML_KEYWORDS: celular,smart tv,notebook,ssd,memoria ram,monitor,fone bluetooth,roteador,power bank,ferramentas,casa,moda,eletrodomesticos
       MIN_DISCOUNT: 20
       MIN_RATING: 4.5
       MIN_SALES: 50
       MAX_OFFERS: 5
-      ML_MIN_DISCOUNT: 15
+      ML_MIN_DISCOUNT: 0
       ML_MAX_OFFERS: 10
+      ML_CATALOG_LIMIT: 5
+      ML_ITEM_LIMIT: 10
+      ML_PROMOTION_CHECKS_PER_PRODUCT: 2
       SUB_ID: telegram,ofertas,tech
     steps:
       - name: Baixar projeto
