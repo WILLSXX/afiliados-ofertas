@@ -4,6 +4,7 @@ const keywords = (env.ML_KEYWORDS || env.KEYWORDS || 'ssd,memoria ram,monitor ga
 const MAX = Number(env.ML_MAX_OFFERS || 10);
 const MIN_DISCOUNT = Number(env.ML_MIN_DISCOUNT || 15);
 const ACCESS_TOKEN = env.ML_ACCESS_TOKEN || '';
+const CATALOG_LIMIT = Number(env.ML_CATALOG_LIMIT || 10);
 
 function money(value) {
   const n = Number(value);
@@ -15,6 +16,15 @@ async function readError(response) {
   const body = await response.text().catch(() => '');
   const suffix = body ? ` — ${body.slice(0, 180)}` : '';
   return `Mercado Livre HTTP ${response.status}${suffix}`;
+}
+
+async function mlGet(path) {
+  const headers = { Accept: 'application/json' };
+  if (ACCESS_TOKEN) headers.Authorization = `Bearer ${ACCESS_TOKEN}`;
+
+  const response = await fetch(`${API}${path}`, { headers });
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json();
 }
 
 async function validateToken() {
@@ -35,41 +45,42 @@ async function validateToken() {
   return { configured: true, valid: true, userId: data.id };
 }
 
-async function search(keyword) {
-  const url = `${API}/sites/MLB/search?q=${encodeURIComponent(keyword)}&limit=50&sort=relevance`;
-  const headers = { Accept: 'application/json' };
-
-  // A busca de anúncios pode funcionar sem autenticação. Se o endpoint
-  // rejeitar o token com 403, fazemos uma segunda tentativa sem Bearer
-  // para separar bloqueio da busca de problema no OAuth.
-  if (ACCESS_TOKEN) headers.Authorization = `Bearer ${ACCESS_TOKEN}`;
-
-  let response = await fetch(url, { headers });
-  if (response.ok) return response.json();
-
-  const firstError = await readError(response);
-
-  if (response.status === 403 && ACCESS_TOKEN) {
-    response = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (response.ok) return response.json();
-
-    const secondError = await readError(response);
-    throw new Error(`${firstError}; tentativa sem token: ${secondError}`);
-  }
-
-  throw new Error(firstError);
+async function searchCatalog(keyword) {
+  const query = encodeURIComponent(keyword);
+  return mlGet(`/products/search?status=active&site_id=MLB&q=${query}&limit=${CATALOG_LIMIT}`);
 }
 
-function normalize(item, keyword) {
+async function getCatalogWinner(productId) {
+  const product = await mlGet(`/products/${encodeURIComponent(productId)}`);
+  const winnerId = product.buy_box_winner?.item_id || product.buy_box_winner?.item?.id || null;
+  if (!winnerId) return null;
+
+  const item = await mlGet(`/items/${encodeURIComponent(winnerId)}`);
+  return { product, item };
+}
+
+function reputationLevel(item) {
+  const level = item.seller?.seller_reputation?.level_id || '';
+  if (level) return level;
+
+  const status = String(item.seller?.seller_reputation?.power_seller_status || '').toLowerCase();
+  if (status) return '5_green';
+  return '';
+}
+
+function normalize(item, keyword, product = null) {
   const price = Number(item.price || 0);
   const original = Number(item.original_price || 0);
   const discount = original > price && original > 0 ? Math.round((1 - price / original) * 100) : 0;
   const seller = item.seller?.nickname || '';
-  const reputation = item.seller?.seller_reputation?.level_id || '';
+  const reputation = reputationLevel(item);
+  const title = item.title || product?.name || product?.family_name || 'Produto Mercado Livre';
+
   return {
     id: item.id,
+    catalogProductId: product?.id || null,
     keyword,
-    title: item.title,
+    title,
     price,
     originalPrice: original || null,
     discount,
@@ -80,6 +91,7 @@ function normalize(item, keyword) {
     sellerReputation: reputation,
     condition: item.condition,
     availableQuantity: item.available_quantity,
+    soldQuantity: item.sold_quantity ?? null,
     shipping: item.shipping?.free_shipping === true ? 'grátis' : 'pago/variável',
     acceptsMercadoPago: item.accepts_mercadopago,
     affiliateLink: null,
@@ -96,7 +108,13 @@ function score(item) {
 }
 
 function eligible(item) {
-  return Boolean(item.permalink && item.price > 0 && item.condition === 'new' && item.availableQuantity !== 0 && item.discount >= MIN_DISCOUNT);
+  return Boolean(
+    item.permalink &&
+    item.price > 0 &&
+    item.condition === 'new' &&
+    item.availableQuantity !== 0 &&
+    item.discount >= MIN_DISCOUNT
+  );
 }
 
 export async function discoverMercadoLivre() {
@@ -112,10 +130,19 @@ export async function discoverMercadoLivre() {
 
   for (const keyword of keywords) {
     try {
-      const result = await search(keyword);
-      for (const raw of result.results || []) {
-        const item = normalize(raw, keyword);
-        if (eligible(item)) all.push({ ...item, score: score(item) });
+      const result = await searchCatalog(keyword);
+      const products = result.results || [];
+
+      for (const product of products) {
+        try {
+          const winner = await getCatalogWinner(product.id);
+          if (!winner) continue;
+
+          const item = normalize(winner.item, keyword, winner.product);
+          if (eligible(item)) all.push({ ...item, score: score(item) });
+        } catch (error) {
+          console.error(`Falha no detalhe do produto ${product.id} (${keyword}): ${error.message}`);
+        }
       }
     } catch (error) {
       const message = `Falha no Mercado Livre (${keyword}): ${error.message}`;
