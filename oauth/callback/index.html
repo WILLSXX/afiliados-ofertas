@@ -1,0 +1,5 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Autorização Mercado Livre</title><style>body{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:20px}code{word-break:break-all}</style></head>
+<body><h1>Autorização recebida</h1><p id="msg">Processando retorno do Mercado Livre...</p><p id="code"></p><script>const p=new URLSearchParams(location.search);const code=p.get('code');const error=p.get('error');const msg=document.getElementById('msg');const out=document.getElementById('code');if(code){msg.textContent='O Mercado Livre retornou o código de autorização. Use-o somente para trocar por tokens no script local.';out.innerHTML='<strong>CODE:</strong><br><code>'+code.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))+'</code>';}else if(error){msg.textContent='O Mercado Livre retornou um erro: '+error;}else{msg.textContent='Nenhum código de autorização foi recebido.';}</script></body>
+</html>
