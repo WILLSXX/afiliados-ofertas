@@ -6,6 +6,7 @@ const MIN_DISCOUNT = Number(env.ML_MIN_DISCOUNT || 0);
 const ACCESS_TOKEN = env.ML_ACCESS_TOKEN || '';
 const CATALOG_LIMIT = Number(env.ML_CATALOG_LIMIT || 5);
 const ITEM_LIMIT = Number(env.ML_ITEM_LIMIT || 10);
+const CHILD_LIMIT = Number(env.ML_CHILD_LIMIT || 4);
 const PROMOTION_CHECKS_PER_PRODUCT = Number(env.ML_PROMOTION_CHECKS_PER_PRODUCT || 2);
 
 const PROMOTION_TYPES = new Set([
@@ -58,10 +59,67 @@ async function searchCatalog(keyword) {
   return mlGet(`/products/search?status=active&site_id=MLB&q=${query}&limit=${CATALOG_LIMIT}`);
 }
 
+async function getProductDetail(productId) {
+  return mlGet(`/products/${encodeURIComponent(productId)}`);
+}
+
+function addCandidate(map, candidate) {
+  if (!candidate?.item_id) return;
+  if (!map.has(candidate.item_id)) map.set(candidate.item_id, candidate);
+}
+
 async function getCatalogOffers(productId) {
   const encodedId = encodeURIComponent(productId);
-  const result = await mlGet(`/products/${encodedId}/items?limit=${ITEM_LIMIT}`);
-  return result.results || [];
+  const candidates = new Map();
+
+  // Primeiro tenta os anúncios diretamente associados ao produto.
+  try {
+    const direct = await mlGet(`/products/${encodedId}/items?limit=${ITEM_LIMIT}`);
+    for (const candidate of direct.results || []) addCandidate(candidates, candidate);
+  } catch {
+    // Continua com o detalhe do produto.
+  }
+
+  // O resultado de /products/search pode apontar para um produto pai. Nesse
+  // caso /products/{id}/items pode vir vazio; a API orienta usar children_ids
+  // para chegar aos produtos terminais e buy_box_winner/item_id.
+  if (!candidates.size) {
+    const detail = await getProductDetail(productId);
+
+    addCandidate(candidates, detail.buy_box_winner);
+
+    const children = Array.isArray(detail.children_ids) ? detail.children_ids.slice(0, CHILD_LIMIT) : [];
+    if (children.length) {
+      const childDetails = await Promise.allSettled(children.map(childId => getProductDetail(childId)));
+      for (const result of childDetails) {
+        if (result.status !== 'fulfilled') continue;
+        const child = result.value;
+        addCandidate(candidates, child.buy_box_winner);
+
+        if (!candidates.size) {
+          try {
+            const childItems = await mlGet(`/products/${encodeURIComponent(child.id)}/items?limit=${ITEM_LIMIT}`);
+            for (const candidate of childItems.results || []) addCandidate(candidates, candidate);
+          } catch {
+            // Best-effort: o vencedor do filho já é suficiente quando existir.
+          }
+        }
+      }
+    }
+  }
+
+  // Se ainda não há item_id, uma última leitura do detalhe pode encontrar um
+  // winner em um produto terminal sem precisar varrer dezenas de anúncios.
+  if (!candidates.size) {
+    try {
+      const detail = await getProductDetail(productId);
+      addCandidate(candidates, detail.buy_box_winner);
+    } catch {
+      // Ignora e deixa o chamador contabilizar a página sem candidato.
+    }
+  }
+
+  return [...candidates.values()];
 }
 
 async function getFullItem(itemId) {
@@ -75,7 +133,7 @@ async function getItemPromotions(itemId) {
 
     return result
       .filter(promo => PROMOTION_TYPES.has(String(promo.type || '')))
-      .filter(promo => ['active', 'started'].includes(String(promo.status || '').toLowerCase()))
+      .filter(promo => ['active', 'started', 'candidate'].includes(String(promo.status || '').toLowerCase()))
       .map(promo => ({
         type: promo.type,
         status: promo.status,
@@ -89,11 +147,12 @@ async function getItemPromotions(itemId) {
         startDate: promo.start_date || null,
         finishDate: promo.finish_date || null,
         price: Number.isFinite(Number(promo.price)) ? Number(promo.price) : null,
-        originalPrice: Number.isFinite(Number(promo.original_price)) ? Number(promo.original_price) : null
+        originalPrice: Number.isFinite(Number(promo.original_price)) ? Number(promo.original_price) : null,
+        benefits: promo.benefits || null,
+        subType: promo.sub_type || null
       }));
-  } catch (error) {
-    // Esse endpoint é orientado ao vendedor. Para um afiliado/usuário comum
-    // pode retornar 403/404; isso não deve interromper a descoberta.
+  } catch {
+    // Endpoint orientado ao vendedor; para afiliado pode não liberar detalhes.
     return [];
   }
 }
@@ -164,7 +223,7 @@ function normalize(item, keyword, product = null, candidate = {}, promotions = [
 
 function score(item) {
   const discountPoints = Math.min(Math.max(item.discount, 0), 60);
-  const reputationPoints = item.sellerReputation === '5_green' ? 15 : item.sellerReputation === '4_light_green' ? 10 : 5;
+  const reputationPoints = item.sellerReputation === '5_green' || item.sellerReputation === 'GREEN' ? 15 : item.sellerReputation === '4_light_green' ? 10 : 5;
   const stockPoints = Number(item.availableQuantity || 0) > 0 ? 15 : 0;
   const shippingPoints = item.shipping === 'grátis' ? 10 : 0;
   const salesPoints = Number(item.soldQuantity || 0) > 0 ? 10 : 0;
@@ -180,10 +239,6 @@ function basicEligible(item) {
     (item.condition === 'new' || !item.condition) &&
     item.availableQuantity !== 0
   );
-}
-
-function eligible(item) {
-  return basicEligible(item) && item.discount >= MIN_DISCOUNT;
 }
 
 export async function discoverMercadoLivre() {
@@ -221,28 +276,22 @@ export async function discoverMercadoLivre() {
           const candidates = await getCatalogOffers(product.id);
           stats.competitorItems += candidates.length;
 
-          const uniqueCandidates = [...new Map(candidates
-            .filter(candidate => candidate.item_id)
-            .map(candidate => [candidate.item_id, candidate])).values()]
-            .sort((a, b) => {
-              const discountA = Number(a.original_price) > Number(a.price) ? (1 - Number(a.price) / Number(a.original_price)) : 0;
-              const discountB = Number(b.original_price) > Number(b.price) ? (1 - Number(b.price) / Number(b.original_price)) : 0;
-              return discountB - discountA || Number(a.price || Infinity) - Number(b.price || Infinity);
-            });
+          const ranked = [...candidates].sort((a, b) => {
+            const discountA = Number(a.original_price) > Number(a.price) ? (1 - Number(a.price) / Number(a.original_price)) : 0;
+            const discountB = Number(b.original_price) > Number(b.price) ? (1 - Number(b.price) / Number(b.original_price)) : 0;
+            return discountB - discountA || Number(a.price || Infinity) - Number(b.price || Infinity);
+          });
 
-          for (const candidate of uniqueCandidates.slice(0, 5)) {
+          for (const candidate of ranked.slice(0, 5)) {
             try {
               const fullItem = await getFullItem(candidate.item_id);
-              let promotions = [];
-              if (stats.promotionChecks < Number.POSITIVE_INFINITY) {
-                // Consulta promoções para uma pequena amostra por página para manter
-                // a execução rápida. O endpoint é best-effort.
-                const checkedForProduct = [...all].filter(item => item.catalogProductId === product.id).length;
-                if (checkedForProduct < PROMOTION_CHECKS_PER_PRODUCT) {
-                  stats.promotionChecks++;
-                  promotions = await getItemPromotions(candidate.item_id);
-                }
-              }
+              const alreadyChecked = all.filter(item => item.catalogProductId === product.id).length;
+              const promotions = alreadyChecked < PROMOTION_CHECKS_PER_PRODUCT
+                ? await (async () => {
+                    stats.promotionChecks++;
+                    return getItemPromotions(candidate.item_id);
+                  })()
+                : [];
 
               const item = normalize(fullItem, keyword, product, candidate, promotions);
               if (!basicEligible(item)) continue;
@@ -255,7 +304,8 @@ export async function discoverMercadoLivre() {
 
               all.push({ ...item, score: score(item) });
 
-              // Uma oportunidade realmente promocional já representa bem esta página.
+              // Já temos uma boa representação desta página quando há desconto
+              // ou promoção. Para páginas sem ambos, tentamos outro candidato.
               if (item.hasPromotion || item.discount > 0) {
                 stats.winners++;
                 break;
@@ -303,6 +353,7 @@ function promotionText(item) {
   else if (uniqueTypes.includes('DOD')) lines.push('🔥 Oferta do dia');
   else if (uniqueTypes.includes('DEAL')) lines.push('🔥 Oferta Mercado Livre');
   else if (uniqueTypes.includes('VOLUME')) lines.push('📦 Desconto por quantidade');
+  else if (uniqueTypes.includes('SELLER_CAMPAIGN')) lines.push('🏷️ Campanha do vendedor');
 
   return lines.join('\n');
 }
