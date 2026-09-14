@@ -5,6 +5,7 @@ const MAX = Number(env.ML_MAX_OFFERS || 10);
 const MIN_DISCOUNT = Number(env.ML_MIN_DISCOUNT || 15);
 const ACCESS_TOKEN = env.ML_ACCESS_TOKEN || '';
 const CATALOG_LIMIT = Number(env.ML_CATALOG_LIMIT || 10);
+const ENABLE_FALLBACK = String(env.ML_FALLBACK || 'true').toLowerCase() === 'true';
 
 function money(value) {
   const n = Number(value);
@@ -104,22 +105,28 @@ function score(item) {
   const reputationPoints = item.sellerReputation === '5_green' ? 15 : item.sellerReputation === '4_light_green' ? 10 : 5;
   const stockPoints = Number(item.availableQuantity || 0) > 0 ? 15 : 0;
   const shippingPoints = item.shipping === 'grátis' ? 10 : 0;
-  return Math.round(Math.min(100, discountPoints + reputationPoints + stockPoints + shippingPoints));
+  const salesPoints = Math.min(Number(item.soldQuantity || 0) > 0 ? 10 : 0, 10);
+  return Math.round(Math.min(100, discountPoints + reputationPoints + stockPoints + shippingPoints + salesPoints));
 }
 
-function eligible(item) {
+function basicEligible(item) {
   return Boolean(
     item.permalink &&
     item.price > 0 &&
     item.condition === 'new' &&
-    item.availableQuantity !== 0 &&
-    item.discount >= MIN_DISCOUNT
+    item.availableQuantity !== 0
   );
+}
+
+function eligible(item) {
+  return basicEligible(item) && item.discount >= MIN_DISCOUNT;
 }
 
 export async function discoverMercadoLivre() {
   const all = [];
+  const fallback = [];
   const errors = [];
+  const stats = { catalogProducts: 0, winners: 0, validProducts: 0, discountedProducts: 0 };
   const token = await validateToken();
 
   if (!token.configured) {
@@ -132,14 +139,23 @@ export async function discoverMercadoLivre() {
     try {
       const result = await searchCatalog(keyword);
       const products = result.results || [];
+      stats.catalogProducts += products.length;
 
       for (const product of products) {
         try {
           const winner = await getCatalogWinner(product.id);
           if (!winner) continue;
+          stats.winners++;
 
           const item = normalize(winner.item, keyword, winner.product);
-          if (eligible(item)) all.push({ ...item, score: score(item) });
+          if (!basicEligible(item)) continue;
+          stats.validProducts++;
+
+          if (item.discount >= MIN_DISCOUNT) stats.discountedProducts++;
+          const candidate = { ...item, score: score(item) };
+
+          if (eligible(item)) all.push(candidate);
+          else if (ENABLE_FALLBACK) fallback.push(candidate);
         } catch (error) {
           console.error(`Falha no detalhe do produto ${product.id} (${keyword}): ${error.message}`);
         }
@@ -151,21 +167,36 @@ export async function discoverMercadoLivre() {
     }
   }
 
-  const unique = [...new Map(all.map(item => [item.id, item])).values()]
+  let selected = all;
+  let fallbackUsed = false;
+
+  if (!selected.length && ENABLE_FALLBACK) {
+    fallbackUsed = fallback.length > 0;
+    selected = fallback;
+  }
+
+  const unique = [...new Map(selected.map(item => [item.id, item])).values()]
     .sort((a, b) => b.score - a.score)
-    .slice(0, MAX);
+    .slice(0, MAX)
+    .map(item => ({ ...item, fallback: fallbackUsed && item.discount < MIN_DISCOUNT }));
 
   return {
     offers: unique,
     errors,
     authenticated: token.valid,
     tokenConfigured: token.configured,
-    tokenUserId: token.userId || null
+    tokenUserId: token.userId || null,
+    stats,
+    fallbackUsed,
+    minDiscount: MIN_DISCOUNT
   };
 }
 
 export function formatMercadoLivre(item) {
   const oldPrice = item.originalPrice ? `De ${money(item.originalPrice)} por ` : '';
   const discount = item.discount ? ` | ${item.discount}% OFF` : '';
-  return `🔥 ${item.title}\n\n💰 ${oldPrice}${money(item.price)}${discount}\n🚚 Frete: ${item.shipping}\n🏪 Vendedor: ${item.seller || 'Mercado Livre'}\n\n🛒 LINK DO PRODUTO:\n${item.permalink}\n\n⚠️ O link acima ainda precisa ser convertido no Gerador de Links do Portal de Afiliados do Mercado Livre antes da divulgação.`;
+  const notice = item.fallback
+    ? '\n⚠️ Candidato de fallback: não foi detectado desconto suficiente pela API. Confirme o preço/oferta no anúncio antes de divulgar.'
+    : '';
+  return `🔥 ${item.title}\n\n💰 ${oldPrice}${money(item.price)}${discount}\n🚚 Frete: ${item.shipping}\n🏪 Vendedor: ${item.seller || 'Mercado Livre'}\n\n🛒 LINK DO PRODUTO:\n${item.permalink}${notice}\n\n⚠️ O link acima ainda precisa ser convertido no Gerador de Links do Portal de Afiliados do Mercado Livre antes da divulgação.`;
 }
