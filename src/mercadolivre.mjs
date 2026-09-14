@@ -11,18 +11,53 @@ function money(value) {
   return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+async function readError(response) {
+  const body = await response.text().catch(() => '');
+  const suffix = body ? ` — ${body.slice(0, 180)}` : '';
+  return `Mercado Livre HTTP ${response.status}${suffix}`;
+}
+
+async function validateToken() {
+  if (!ACCESS_TOKEN) return { configured: false, valid: false, error: 'ML_ACCESS_TOKEN não configurado.' };
+
+  const response = await fetch(`${API}/users/me`, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${ACCESS_TOKEN}`
+    }
+  });
+
+  if (!response.ok) {
+    return { configured: true, valid: false, error: await readError(response) };
+  }
+
+  const data = await response.json();
+  return { configured: true, valid: true, userId: data.id };
+}
+
 async function search(keyword) {
   const url = `${API}/sites/MLB/search?q=${encodeURIComponent(keyword)}&limit=50&sort=relevance`;
   const headers = { Accept: 'application/json' };
+
+  // A busca de anúncios pode funcionar sem autenticação. Se o endpoint
+  // rejeitar o token com 403, fazemos uma segunda tentativa sem Bearer
+  // para separar bloqueio da busca de problema no OAuth.
   if (ACCESS_TOKEN) headers.Authorization = `Bearer ${ACCESS_TOKEN}`;
 
-  const response = await fetch(url, { headers });
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    const suffix = body ? ` — ${body.slice(0, 180)}` : '';
-    throw new Error(`Mercado Livre HTTP ${response.status}${suffix}`);
+  let response = await fetch(url, { headers });
+  if (response.ok) return response.json();
+
+  const firstError = await readError(response);
+
+  if (response.status === 403 && ACCESS_TOKEN) {
+    response = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (response.ok) return response.json();
+
+    const secondError = await readError(response);
+    throw new Error(`${firstError}; tentativa sem token: ${secondError}`);
   }
-  return response.json();
+
+  throw new Error(firstError);
 }
 
 function normalize(item, keyword) {
@@ -67,9 +102,12 @@ function eligible(item) {
 export async function discoverMercadoLivre() {
   const all = [];
   const errors = [];
+  const token = await validateToken();
 
-  if (!ACCESS_TOKEN) {
-    errors.push('ML_ACCESS_TOKEN não configurado. A API do Mercado Livre está exigindo autorização para esta execução.');
+  if (!token.configured) {
+    errors.push(token.error);
+  } else if (!token.valid) {
+    errors.push(`Token do Mercado Livre inválido ou sem autorização: ${token.error}`);
   }
 
   for (const keyword of keywords) {
@@ -90,7 +128,13 @@ export async function discoverMercadoLivre() {
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX);
 
-  return { offers: unique, errors, authenticated: Boolean(ACCESS_TOKEN) };
+  return {
+    offers: unique,
+    errors,
+    authenticated: token.valid,
+    tokenConfigured: token.configured,
+    tokenUserId: token.userId || null
+  };
 }
 
 export function formatMercadoLivre(item) {
