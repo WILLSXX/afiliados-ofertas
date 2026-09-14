@@ -1,6 +1,8 @@
 const API = 'https://api.mercadolibre.com';
 const APP_ID = '2338114927381205';
 const TOKEN = process.env.ML_ACCESS_TOKEN || '';
+const USER_ID = '432200178';
+const KEYWORDS = ['ssd', 'memoria ram', 'monitor gamer'];
 
 async function get(path, auth = true) {
   const headers = { Accept: 'application/json' };
@@ -9,11 +11,7 @@ async function get(path, auth = true) {
   const text = await response.text().catch(() => '');
   let data;
   try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-  return {
-    status: response.status,
-    ok: response.ok,
-    data
-  };
+  return { status: response.status, ok: response.ok, data };
 }
 
 function compact(data) {
@@ -44,23 +42,24 @@ if (!TOKEN) {
   const me = await get('/users/me');
   print('1. /users/me', me);
 
-  const userId = me.data?.id;
-  if (userId) {
-    print('2. /users/{USER_ID}/applications', await get(`/users/${userId}/applications`));
-  }
-
+  print('2. /users/{USER_ID}/applications', await get(`/users/${USER_ID}/applications`));
   print('3. /applications/{APP_ID}', await get(`/applications/${APP_ID}`));
   print('4. /applications/{APP_ID}/grants', await get(`/applications/${APP_ID}/grants`));
 
-  // Endpoint público de referência: ajuda a separar bloqueio geral da API de bloqueio específico.
   print('5. /sites/MLB/categories', await get('/sites/MLB/categories', false));
-
-  // Busca genérica que está retornando 403 no projeto.
   print('6. /sites/MLB/search?q=ssd', await get('/sites/MLB/search?q=ssd&limit=5&sort=relevance'));
+  print('7. /sites/MLB/search?seller_id={USER_ID}', await get(`/sites/MLB/search?seller_id=${USER_ID}&limit=5`));
+  print('8. /users/{USER_ID}/items/search', await get(`/users/${USER_ID}/items/search?status=active&limit=5`));
 
-  // Busca por vendedor, documentada oficialmente e autenticada.
-  if (userId) {
-    print('7. /sites/MLB/search?seller_id={USER_ID}', await get(`/sites/MLB/search?seller_id=${userId}&limit=5`));
-    print('8. /users/{USER_ID}/items/search', await get(`/users/${userId}/items/search?status=active&limit=5`));
+  // Rotas alternativas oficiais para descobrir produtos/catálogo.
+  for (const keyword of KEYWORDS) {
+    const q = encodeURIComponent(keyword);
+    print(`9. /products/search?q=${keyword}`, await get(`/products/search?status=active&site_id=MLB&q=${q}&limit=5`));
+    print(`10. /sites/MLB/domain_discovery/search?q=${keyword}`, await get(`/sites/MLB/domain_discovery/search?q=${q}&limit=3`));
   }
+
+  // Detalhe de item público, usando um ID que já pertence ao próprio usuário.
+  const ownItems = await get(`/users/${USER_ID}/items/search?status=active&limit=1`);
+  const itemId = ownItems.data?.results?.[0];
+  if (itemId) print(`11. /items/${itemId}`, await get(`/items/${itemId}`));
 }
