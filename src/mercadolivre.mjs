@@ -1,13 +1,15 @@
 const env = process.env;
 const API = 'https://api.mercadolibre.com';
-const keywords = (env.ML_KEYWORDS || env.KEYWORDS || 'celular,smart tv,notebook,ssd,memoria ram,monitor,fone bluetooth,roteador,power bank,ferramentas,casa,moda').split(',').map(s => s.trim()).filter(Boolean);
+const SITE_ID = 'MLB';
+const keywords = (env.ML_KEYWORDS || env.KEYWORDS || 'celular,smart tv,notebook,ssd,memoria ram,monitor,fone bluetooth,roteador,power bank,ferramentas,casa,moda')
+  .split(',').map(s => s.trim()).filter(Boolean);
 const MAX = Number(env.ML_MAX_OFFERS || 10);
 const MIN_DISCOUNT = Number(env.ML_MIN_DISCOUNT || 0);
 const ACCESS_TOKEN = env.ML_ACCESS_TOKEN || '';
 const CATALOG_LIMIT = Number(env.ML_CATALOG_LIMIT || 5);
-const ITEM_LIMIT = Number(env.ML_ITEM_LIMIT || 10);
-const CHILD_LIMIT = Number(env.ML_CHILD_LIMIT || 4);
-const PROMOTION_CHECKS_PER_PRODUCT = Number(env.ML_PROMOTION_CHECKS_PER_PRODUCT || 2);
+const HIGHLIGHT_LIMIT = Number(env.ML_HIGHLIGHT_LIMIT || 20);
+const MAX_CATEGORIES_PER_KEYWORD = Number(env.ML_MAX_CATEGORIES_PER_KEYWORD || 2);
+const PROMOTION_CHECKS = Number(env.ML_PROMOTION_CHECKS || 8);
 
 const PROMOTION_TYPES = new Set([
   'DEAL', 'MARKETPLACE_CAMPAIGN', 'DOD', 'LIGHTNING', 'VOLUME',
@@ -17,20 +19,17 @@ const PROMOTION_TYPES = new Set([
 
 function money(value) {
   const n = Number(value);
-  if (!Number.isFinite(n)) return 'R$ --';
-  return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  return Number.isFinite(n) ? n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : 'R$ --';
 }
 
 async function readError(response) {
   const body = await response.text().catch(() => '');
-  const suffix = body ? ` — ${body.slice(0, 180)}` : '';
-  return `Mercado Livre HTTP ${response.status}${suffix}`;
+  return `Mercado Livre HTTP ${response.status}${body ? ` — ${body.slice(0, 180)}` : ''}`;
 }
 
 async function mlGet(path) {
   const headers = { Accept: 'application/json' };
   if (ACCESS_TOKEN) headers.Authorization = `Bearer ${ACCESS_TOKEN}`;
-
   const response = await fetch(`${API}${path}`, { headers });
   if (!response.ok) throw new Error(await readError(response));
   return response.json();
@@ -38,323 +37,288 @@ async function mlGet(path) {
 
 async function validateToken() {
   if (!ACCESS_TOKEN) return { configured: false, valid: false, error: 'ML_ACCESS_TOKEN não configurado.' };
-
   const response = await fetch(`${API}/users/me`, {
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${ACCESS_TOKEN}`
-    }
+    headers: { Accept: 'application/json', Authorization: `Bearer ${ACCESS_TOKEN}` }
   });
-
-  if (!response.ok) {
-    return { configured: true, valid: false, error: await readError(response) };
-  }
-
+  if (!response.ok) return { configured: true, valid: false, error: await readError(response) };
   const data = await response.json();
   return { configured: true, valid: true, userId: data.id };
 }
 
 async function searchCatalog(keyword) {
-  const query = encodeURIComponent(keyword);
-  return mlGet(`/products/search?status=active&site_id=MLB&q=${query}&limit=${CATALOG_LIMIT}`);
+  return mlGet(`/products/search?status=active&site_id=${SITE_ID}&q=${encodeURIComponent(keyword)}&limit=${CATALOG_LIMIT}`);
 }
 
-async function getProductDetail(productId) {
+async function predictCategories(keyword) {
+  return mlGet(`/sites/${SITE_ID}/domain_discovery/search?limit=3&q=${encodeURIComponent(keyword)}`);
+}
+
+async function getHighlights(categoryId) {
+  return mlGet(`/highlights/${SITE_ID}/category/${encodeURIComponent(categoryId)}`);
+}
+
+async function getProduct(productId) {
   return mlGet(`/products/${encodeURIComponent(productId)}`);
 }
 
-function addCandidate(map, candidate) {
-  if (!candidate?.item_id) return;
-  if (!map.has(candidate.item_id)) map.set(candidate.item_id, candidate);
-}
-
-async function getCatalogOffers(productId) {
-  const encodedId = encodeURIComponent(productId);
-  const candidates = new Map();
-
-  // Primeiro tenta os anúncios diretamente associados ao produto.
+async function getProductItems(productId) {
   try {
-    const direct = await mlGet(`/products/${encodedId}/items?limit=${ITEM_LIMIT}`);
-    for (const candidate of direct.results || []) addCandidate(candidates, candidate);
+    const result = await mlGet(`/products/${encodeURIComponent(productId)}/items?limit=100`);
+    return result.results || [];
   } catch {
-    // Continua com o detalhe do produto.
+    return [];
   }
-
-  // O resultado de /products/search pode apontar para um produto pai. Nesse
-  // caso /products/{id}/items pode vir vazio; a API orienta usar children_ids
-  // para chegar aos produtos terminais e buy_box_winner/item_id.
-  if (!candidates.size) {
-    const detail = await getProductDetail(productId);
-
-    addCandidate(candidates, detail.buy_box_winner);
-
-    const children = Array.isArray(detail.children_ids) ? detail.children_ids.slice(0, CHILD_LIMIT) : [];
-    if (children.length) {
-      const childDetails = await Promise.allSettled(children.map(childId => getProductDetail(childId)));
-      for (const result of childDetails) {
-        if (result.status !== 'fulfilled') continue;
-        const child = result.value;
-        addCandidate(candidates, child.buy_box_winner);
-
-        if (!candidates.size) {
-          try {
-            const childItems = await mlGet(`/products/${encodeURIComponent(child.id)}/items?limit=${ITEM_LIMIT}`);
-            for (const candidate of childItems.results || []) addCandidate(candidates, candidate);
-          } catch {
-            // Best-effort: o vencedor do filho já é suficiente quando existir.
-          }
-        }
-      }
-    }
-  }
-
-  // Se ainda não há item_id, uma última leitura do detalhe pode encontrar um
-  // winner em um produto terminal sem precisar varrer dezenas de anúncios.
-  if (!candidates.size) {
-    try {
-      const detail = await getProductDetail(productId);
-      addCandidate(candidates, detail.buy_box_winner);
-    } catch {
-      // Ignora e deixa o chamador contabilizar a página sem candidato.
-    }
-  }
-
-  return [...candidates.values()];
 }
 
 async function getFullItem(itemId) {
   return mlGet(`/items/${encodeURIComponent(itemId)}`);
 }
 
-async function getItemPromotions(itemId) {
+async function getPromotions(itemId) {
   try {
     const result = await mlGet(`/seller-promotions/items/${encodeURIComponent(itemId)}?app_version=v2`);
     if (!Array.isArray(result)) return [];
-
     return result
-      .filter(promo => PROMOTION_TYPES.has(String(promo.type || '')))
-      .filter(promo => ['active', 'started', 'candidate'].includes(String(promo.status || '').toLowerCase()))
-      .map(promo => ({
-        type: promo.type,
-        status: promo.status,
-        name: promo.name || '',
-        promotionId: promo.id || promo.promotion_id || null,
-        couponCode: promo.coupon_code || null,
-        fixedPercentage: Number.isFinite(Number(promo.fixed_percentage)) ? Number(promo.fixed_percentage) : null,
-        fixedAmount: Number.isFinite(Number(promo.fixed_amount)) ? Number(promo.fixed_amount) : null,
-        minPurchaseAmount: Number.isFinite(Number(promo.min_purchase_amount)) ? Number(promo.min_purchase_amount) : null,
-        maxPurchaseAmount: Number.isFinite(Number(promo.max_purchase_amount)) ? Number(promo.max_purchase_amount) : null,
-        startDate: promo.start_date || null,
-        finishDate: promo.finish_date || null,
-        price: Number.isFinite(Number(promo.price)) ? Number(promo.price) : null,
-        originalPrice: Number.isFinite(Number(promo.original_price)) ? Number(promo.original_price) : null,
-        benefits: promo.benefits || null,
-        subType: promo.sub_type || null
+      .filter(p => PROMOTION_TYPES.has(String(p.type || '')))
+      .filter(p => ['active', 'started', 'candidate'].includes(String(p.status || '').toLowerCase()))
+      .map(p => ({
+        type: p.type,
+        status: p.status,
+        name: p.name || '',
+        couponCode: p.coupon_code || null,
+        fixedPercentage: Number.isFinite(Number(p.fixed_percentage)) ? Number(p.fixed_percentage) : null,
+        fixedAmount: Number.isFinite(Number(p.fixed_amount)) ? Number(p.fixed_amount) : null,
+        minPurchaseAmount: Number.isFinite(Number(p.min_purchase_amount)) ? Number(p.min_purchase_amount) : null,
+        maxPurchaseAmount: Number.isFinite(Number(p.max_purchase_amount)) ? Number(p.max_purchase_amount) : null
       }));
   } catch {
-    // Endpoint orientado ao vendedor; para afiliado pode não liberar detalhes.
     return [];
   }
 }
 
-function reputationLevel(item) {
-  const level = item.seller?.seller_reputation?.level_id || item.seller?.reputation_level_id || '';
-  if (level) return level;
-
-  const status = String(item.seller?.seller_reputation?.power_seller_status || '').toLowerCase();
-  if (status) return '5_green';
-  return '';
+function reputation(item) {
+  return item.seller?.seller_reputation?.level_id || item.seller?.reputation_level_id || '';
 }
 
-function extractPromotionSignals(candidate = {}, item = {}) {
-  const values = [];
-  for (const source of [candidate, item]) {
-    for (const key of ['deal_ids', 'promotion_ids', 'promotion_id', 'promotion_type', 'promotion_types']) {
-      const value = source?.[key];
-      if (Array.isArray(value)) values.push(...value.map(String));
-      else if (value) values.push(String(value));
-    }
-  }
-  return [...new Set(values)];
-}
-
-function normalize(item, keyword, product = null, candidate = {}, promotions = []) {
+function normalize(item, keyword, source, rank = null, promotions = []) {
   const price = Number(item.price || 0);
   const original = Number(item.original_price || 0);
-  const discount = original > price && original > 0 ? Math.round((1 - price / original) * 100) : 0;
-  const seller = item.seller?.nickname || '';
-  const reputation = reputationLevel(item);
-  const title = item.title || product?.name || product?.family_name || 'Produto Mercado Livre';
-
-  const activePromotions = promotions.filter(Boolean);
-  const coupon = activePromotions.find(promo => promo.type === 'SELLER_COUPON_CAMPAIGN');
-  const promotionTypes = [...new Set(activePromotions.map(promo => promo.type).concat(extractPromotionSignals(candidate, item)))];
-
+  const discount = original > price ? Math.round((1 - price / original) * 100) : 0;
+  const promoTypes = [...new Set(promotions.map(p => p.type).filter(Boolean))];
+  const coupon = promotions.find(p => p.type === 'SELLER_COUPON_CAMPAIGN');
   return {
     id: item.id,
-    catalogProductId: product?.id || null,
     keyword,
-    title,
+    source,
+    rank,
+    title: item.title || 'Produto Mercado Livre',
     price,
     originalPrice: original || null,
     discount,
     currency: item.currency_id,
-    permalink: item.permalink,
-    thumbnail: item.thumbnail,
-    seller,
-    sellerReputation: reputation,
-    condition: item.condition || item.item_condition,
-    availableQuantity: item.available_quantity,
+    permalink: item.permalink || null,
+    thumbnail: item.thumbnail || null,
+    seller: item.seller?.nickname || '',
+    sellerReputation: reputation(item),
+    condition: item.condition || null,
+    availableQuantity: item.available_quantity ?? null,
     soldQuantity: item.sold_quantity ?? null,
     shipping: item.shipping?.free_shipping === true ? 'grátis' : 'pago/variável',
-    acceptsMercadoPago: item.accepts_mercadopago,
-    promotionTypes,
-    promotions: activePromotions,
-    hasPromotion: activePromotions.length > 0 || promotionTypes.length > 0,
+    promotions,
+    promotionTypes: promoTypes,
+    hasPromotion: promotions.length > 0 || promoTypes.length > 0,
     couponCode: coupon?.couponCode || null,
     couponPercentage: coupon?.fixedPercentage || null,
     couponAmount: coupon?.fixedAmount || null,
-    couponMinPurchase: coupon?.minPurchaseAmount || null,
-    couponMaxPurchase: coupon?.maxPurchaseAmount || null,
     affiliateLink: null,
     affiliateStatus: 'PENDENTE_GERACAO_NO_PORTAL'
   };
 }
 
-function score(item) {
-  const discountPoints = Math.min(Math.max(item.discount, 0), 60);
-  const reputationPoints = item.sellerReputation === '5_green' || item.sellerReputation === 'GREEN' ? 15 : item.sellerReputation === '4_light_green' ? 10 : 5;
-  const stockPoints = Number(item.availableQuantity || 0) > 0 ? 15 : 0;
-  const shippingPoints = item.shipping === 'grátis' ? 10 : 0;
-  const salesPoints = Number(item.soldQuantity || 0) > 0 ? 10 : 0;
-  const promotionPoints = item.hasPromotion ? 20 : 0;
-  const couponPoints = item.couponCode || item.couponPercentage || item.couponAmount ? 15 : 0;
-  return Math.round(Math.min(100, discountPoints + reputationPoints + stockPoints + shippingPoints + salesPoints + promotionPoints + couponPoints));
+function valid(item) {
+  return Boolean(item.permalink && item.price > 0 && (item.condition === 'new' || !item.condition) && item.availableQuantity !== 0);
 }
 
-function basicEligible(item) {
-  return Boolean(
-    item.permalink &&
-    item.price > 0 &&
-    (item.condition === 'new' || !item.condition) &&
-    item.availableQuantity !== 0
-  );
+function score(item) {
+  const discountPoints = Math.min(item.discount, 60);
+  const reputationPoints = item.sellerReputation === '5_green' || item.sellerReputation === 'GREEN' ? 15 : item.sellerReputation === '4_light_green' ? 10 : 5;
+  const stockPoints = item.availableQuantity > 0 ? 15 : 0;
+  const shippingPoints = item.shipping === 'grátis' ? 10 : 0;
+  const salesPoints = item.soldQuantity > 0 ? 10 : 0;
+  const promotionPoints = item.hasPromotion ? 20 : 0;
+  const couponPoints = item.couponCode || item.couponPercentage || item.couponAmount ? 15 : 0;
+  const rankPoints = Number.isFinite(Number(item.rank)) ? Math.max(0, 20 - Number(item.rank)) : 0;
+  return Math.min(100, Math.round(discountPoints + reputationPoints + stockPoints + shippingPoints + salesPoints + promotionPoints + couponPoints + rankPoints));
 }
 
 export async function discoverMercadoLivre() {
-  const all = [];
   const errors = [];
+  const offers = [];
   const stats = {
     catalogProducts: 0,
-    catalogPagesChecked: 0,
-    competitorItems: 0,
-    discountedItems: 0,
-    promotionChecks: 0,
+    categories: 0,
+    highlightEntries: 0,
+    itemCandidates: 0,
+    productCandidates: 0,
+    userProductCandidates: 0,
+    catalogItemCandidates: 0,
+    validProducts: 0,
+    discountedProducts: 0,
     promotedItems: 0,
     couponItems: 0,
-    winners: 0,
-    validProducts: 0,
-    discountedProducts: 0
+    winners: 0
   };
-  const token = await validateToken();
 
-  if (!token.configured) {
-    errors.push(token.error);
-  } else if (!token.valid) {
-    errors.push(`Token do Mercado Livre inválido ou sem autorização: ${token.error}`);
+  const token = await validateToken();
+  if (!token.valid) {
+    if (token.error) errors.push(`Token do Mercado Livre inválido ou ausente: ${token.error}`);
+    return { offers: [], errors, authenticated: false, tokenConfigured: token.configured, tokenUserId: null, stats, fallbackUsed: false, minDiscount: MIN_DISCOUNT };
   }
+
+  const seenItems = new Set();
+  const seenCategories = new Set();
+  let promotionChecks = 0;
 
   for (const keyword of keywords) {
     try {
-      const result = await searchCatalog(keyword);
-      const products = result.results || [];
+      const [catalog, predicted] = await Promise.all([
+        searchCatalog(keyword),
+        predictCategories(keyword).catch(() => [])
+      ]);
+      const products = catalog.results || [];
       stats.catalogProducts += products.length;
 
-      for (const product of products) {
+      const categories = [];
+      for (const p of predicted || []) if (p.category_id) categories.push(p.category_id);
+      for (const p of products) if (p.category_id) categories.push(p.category_id);
+
+      for (const categoryId of [...new Set(categories)].slice(0, MAX_CATEGORIES_PER_KEYWORD)) {
+        if (seenCategories.has(categoryId)) continue;
+        seenCategories.add(categoryId);
+        stats.categories++;
+
+        let highlight;
         try {
-          stats.catalogPagesChecked++;
-          const candidates = await getCatalogOffers(product.id);
-          stats.competitorItems += candidates.length;
+          highlight = await getHighlights(categoryId);
+        } catch (error) {
+          errors.push(`Falha no ranking ${categoryId}: ${error.message}`);
+          continue;
+        }
 
-          const ranked = [...candidates].sort((a, b) => {
-            const discountA = Number(a.original_price) > Number(a.price) ? (1 - Number(a.price) / Number(a.original_price)) : 0;
-            const discountB = Number(b.original_price) > Number(b.price) ? (1 - Number(b.price) / Number(b.original_price)) : 0;
-            return discountB - discountA || Number(a.price || Infinity) - Number(b.price || Infinity);
-          });
+        const entries = Array.isArray(highlight.content) ? highlight.content.slice(0, HIGHLIGHT_LIMIT) : [];
+        stats.highlightEntries += entries.length;
 
-          for (const candidate of ranked.slice(0, 5)) {
-            try {
-              const fullItem = await getFullItem(candidate.item_id);
-              const alreadyChecked = all.filter(item => item.catalogProductId === product.id).length;
-              const promotions = alreadyChecked < PROMOTION_CHECKS_PER_PRODUCT
-                ? await (async () => {
-                    stats.promotionChecks++;
-                    return getItemPromotions(candidate.item_id);
-                  })()
-                : [];
+        for (const entry of entries) {
+          try {
+            if (!entry?.id) continue;
 
-              const item = normalize(fullItem, keyword, product, candidate, promotions);
-              if (!basicEligible(item)) continue;
+            if (entry.type === 'USER_PRODUCT') {
+              stats.userProductCandidates++;
+              continue;
+            }
 
+            if (entry.type === 'ITEM') {
+              stats.itemCandidates++;
+              if (seenItems.has(entry.id)) continue;
+              const item = await getFullItem(entry.id);
+              seenItems.add(entry.id);
+              let promotions = [];
+              if (promotionChecks < PROMOTION_CHECKS) {
+                promotionChecks++;
+                promotions = await getPromotions(entry.id);
+              }
+              const normalized = normalize(item, keyword, 'highlight_item', entry.position, promotions);
+              if (!valid(normalized)) continue;
+              normalized.score = score(normalized);
               stats.validProducts++;
-              if (item.discount > 0) stats.discountedItems++;
-              if (item.discount >= MIN_DISCOUNT && item.discount > 0) stats.discountedProducts++;
-              if (item.hasPromotion) stats.promotedItems++;
-              if (item.couponCode || item.couponPercentage || item.couponAmount) stats.couponItems++;
+              if (normalized.discount > 0) stats.discountedProducts++;
+              if (normalized.hasPromotion) stats.promotedItems++;
+              if (normalized.couponCode || normalized.couponPercentage || normalized.couponAmount) stats.couponItems++;
+              if (normalized.discount >= MIN_DISCOUNT || normalized.hasPromotion) stats.winners++;
+              offers.push(normalized);
+              continue;
+            }
 
-              all.push({ ...item, score: score(item) });
+            if (entry.type === 'PRODUCT') {
+              stats.productCandidates++;
+              const product = await getProduct(entry.id);
+              let candidates = await getProductItems(entry.id);
+              if (!candidates.length && product.buy_box_winner?.item_id) candidates = [{ item_id: product.buy_box_winner.item_id, ...product.buy_box_winner }];
 
-              // Já temos uma boa representação desta página quando há desconto
-              // ou promoção. Para páginas sem ambos, tentamos outro candidato.
-              if (item.hasPromotion || item.discount > 0) {
-                stats.winners++;
+              for (const candidate of candidates.slice(0, 5)) {
+                if (!candidate.item_id || seenItems.has(candidate.item_id)) continue;
+                const item = await getFullItem(candidate.item_id).catch(() => null);
+                if (!item) continue;
+                seenItems.add(candidate.item_id);
+                let promotions = [];
+                if (promotionChecks < PROMOTION_CHECKS) {
+                  promotionChecks++;
+                  promotions = await getPromotions(candidate.item_id);
+                }
+                const normalized = normalize(item, keyword, 'highlight_product', entry.position, promotions);
+                if (!valid(normalized)) continue;
+                normalized.score = score(normalized);
+                stats.validProducts++;
+                if (normalized.discount > 0) stats.discountedProducts++;
+                if (normalized.hasPromotion) stats.promotedItems++;
+                if (normalized.couponCode || normalized.couponPercentage || normalized.couponAmount) stats.couponItems++;
+                if (normalized.discount >= MIN_DISCOUNT || normalized.hasPromotion) stats.winners++;
+                offers.push(normalized);
                 break;
               }
-            } catch (error) {
-              console.error(`Falha no anúncio ${candidate.item_id} (${keyword}): ${error.message}`);
             }
+          } catch (error) {
+            console.error(`Falha processando ${entry.id}: ${error.message}`);
           }
-        } catch (error) {
-          console.error(`Falha na página de produto ${product.id} (${keyword}): ${error.message}`);
         }
       }
     } catch (error) {
-      const message = `Falha no Mercado Livre (${keyword}): ${error.message}`;
-      errors.push(message);
-      console.error(message);
+      errors.push(`Falha no Mercado Livre (${keyword}): ${error.message}`);
     }
   }
 
-  const unique = [...new Map(all.map(item => [item.id, item])).values()]
+  // Complemento pelo catálogo oficial.
+  for (const keyword of keywords) {
+    try {
+      const catalog = await searchCatalog(keyword);
+      for (const product of (catalog.results || []).slice(0, CATALOG_LIMIT)) {
+        const candidates = await getProductItems(product.id);
+        stats.catalogItemCandidates += candidates.length;
+        for (const candidate of candidates.slice(0, 3)) {
+          if (!candidate.item_id || seenItems.has(candidate.item_id)) continue;
+          const item = await getFullItem(candidate.item_id).catch(() => null);
+          if (!item) continue;
+          seenItems.add(candidate.item_id);
+          const normalized = normalize(item, keyword, 'catalog_item', null, []);
+          if (!valid(normalized)) continue;
+          normalized.score = score(normalized);
+          stats.validProducts++;
+          if (normalized.discount > 0) stats.discountedProducts++;
+          offers.push(normalized);
+        }
+      }
+    } catch {
+      // Complementar; não interromper a descoberta principal.
+    }
+  }
+
+  const unique = [...new Map(offers.map(item => [item.id, item])).values()]
     .sort((a, b) => b.score - a.score || b.discount - a.discount)
     .slice(0, MAX);
 
-  return {
-    offers: unique,
-    errors,
-    authenticated: token.valid,
-    tokenConfigured: token.configured,
-    tokenUserId: token.userId || null,
-    stats,
-    fallbackUsed: false,
-    minDiscount: MIN_DISCOUNT
-  };
+  return { offers: unique, errors, authenticated: true, tokenConfigured: true, tokenUserId: token.userId || null, stats, fallbackUsed: false, minDiscount: MIN_DISCOUNT };
 }
 
 function promotionText(item) {
   const lines = [];
-  if (item.couponPercentage) lines.push(`🎟️ Cupom: ${item.couponPercentage}% OFF${item.couponMinPurchase ? ` acima de ${money(item.couponMinPurchase)}` : ''}`);
-  else if (item.couponAmount) lines.push(`🎟️ Cupom: ${money(item.couponAmount)} OFF${item.couponMinPurchase ? ` acima de ${money(item.couponMinPurchase)}` : ''}`);
+  if (item.couponPercentage) lines.push(`🎟️ Cupom: ${item.couponPercentage}% OFF`);
+  else if (item.couponAmount) lines.push(`🎟️ Cupom: ${money(item.couponAmount)} OFF`);
   if (item.couponCode) lines.push(`🏷️ Código: ${item.couponCode}`);
-
-  const knownTypes = item.promotions?.map(p => p.type).filter(Boolean) || [];
-  const uniqueTypes = [...new Set(knownTypes)];
-  if (uniqueTypes.includes('LIGHTNING')) lines.push('⚡ Oferta relâmpago');
-  else if (uniqueTypes.includes('DOD')) lines.push('🔥 Oferta do dia');
-  else if (uniqueTypes.includes('DEAL')) lines.push('🔥 Oferta Mercado Livre');
-  else if (uniqueTypes.includes('VOLUME')) lines.push('📦 Desconto por quantidade');
-  else if (uniqueTypes.includes('SELLER_CAMPAIGN')) lines.push('🏷️ Campanha do vendedor');
-
+  const types = new Set(item.promotionTypes || []);
+  if (types.has('LIGHTNING')) lines.push('⚡ Oferta relâmpago');
+  else if (types.has('DOD')) lines.push('🔥 Oferta do dia');
+  else if (types.has('DEAL')) lines.push('🔥 Oferta Mercado Livre');
+  else if (types.has('SELLER_CAMPAIGN')) lines.push('🏷️ Campanha do vendedor');
   return lines.join('\n');
 }
 
@@ -362,6 +326,5 @@ export function formatMercadoLivre(item) {
   const oldPrice = item.originalPrice ? `De ${money(item.originalPrice)} por ` : '';
   const discount = item.discount ? ` | ${item.discount}% OFF` : '';
   const promotion = promotionText(item);
-  const promotionBlock = promotion ? `\n\n${promotion}` : '';
-  return `🔥 ${item.title}\n\n💰 ${oldPrice}${money(item.price)}${discount}${promotionBlock}\n🚚 Frete: ${item.shipping}\n🏪 Vendedor: ${item.seller || 'Mercado Livre'}\n\n🛒 LINK DO PRODUTO:\n${item.permalink}\n\n⚠️ O link acima ainda precisa ser convertido no Gerador de Links do Portal de Afiliados do Mercado Livre antes da divulgação.`;
+  return `🔥 ${item.title}\n\n💰 ${oldPrice}${money(item.price)}${discount}${promotion ? `\n\n${promotion}` : ''}\n🚚 Frete: ${item.shipping}\n🏪 Vendedor: ${item.seller || 'Mercado Livre'}\n\n🛒 LINK DO PRODUTO:\n${item.permalink}\n\n⚠️ Converta este link no Gerador de Links oficial do Portal de Afiliados antes de divulgar.`;
 }
