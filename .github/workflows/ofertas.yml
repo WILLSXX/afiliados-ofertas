@@ -1,6 +1,8 @@
 name: Buscar ofertas
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
   schedule:
     - cron: '17 * * * *'
@@ -31,8 +33,11 @@ jobs:
       ML_MIN_DISCOUNT: 0
       ML_MAX_OFFERS: 10
       ML_CATALOG_LIMIT: 5
-      ML_ITEM_LIMIT: 10
+      ML_ITEM_LIMIT: 100
       ML_PROMOTION_CHECKS_PER_PRODUCT: 2
+      ML_HIGHLIGHT_LIMIT: 20
+      ML_MAX_CATEGORIES_PER_KEYWORD: 2
+      ML_PROMOTION_CHECKS: 8
       SUB_ID: telegram,ofertas,tech
     steps:
       - name: Baixar projeto
