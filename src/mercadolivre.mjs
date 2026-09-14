@@ -81,12 +81,19 @@ function cleanTitle(rawTitle, fallback = 'Produto Mercado Livre') {
   if (!title) return fallback;
   const tokens = title.split(' ');
   if (tokens.length <= 16) return title;
-  const half = Math.max(8, Math.floor(tokens.length / 2));
-  const left = tokens.slice(0, half).join(' ');
-  const right = tokens.slice(half).join(' ');
-  const similarity = left.toLowerCase().split(' ').filter((word, index, arr) => right.toLowerCase().includes(word) && arr.indexOf(word) === index).length;
-  if (similarity >= Math.min(6, Math.floor(half / 2))) return left;
-  return tokens.slice(0, 18).join(' ') + '…';
+  // Remove repetições exatas de blocos de palavras.
+  for (let size = Math.min(8, Math.floor(tokens.length / 3)); size >= 3; size--) {
+    for (let start = 0; start + size * 2 <= tokens.length; start++) {
+      const block = tokens.slice(start, start + size).join(' ').toLowerCase();
+      const next = tokens.slice(start + size, start + size * 2).join(' ').toLowerCase();
+      if (block === next) {
+        const shortened = [...tokens.slice(0, start), ...tokens.slice(start + size)].join(' ');
+        return cleanTitle(shortened, fallback);
+      }
+    }
+  }
+  // Títulos de catálogo muito verbosos: mantém a parte inicial útil para divulgação.
+  return tokens.slice(0, 16).join(' ') + '…';
 }
 function sellerName(item) {
   const nickname = item?.seller?.nickname;
@@ -101,9 +108,10 @@ function normalize(item, keyword, source, rank = null, promotions = [], catalog 
   const coupon = promotions.find(p => p.type === 'SELLER_COUPON_CAMPAIGN');
   const itemId = item.id || item.item_id;
   const catalogName = catalog?.name || catalog?.family_name || '';
+  const rawTitle = catalogName && catalogName.length < String(item.title || '').length * 0.8 ? catalogName : (item.title || catalogName);
   return {
     id: itemId, keyword, source, rank,
-    title: cleanTitle(item.title || catalogName, catalogName || 'Produto Mercado Livre'),
+    title: cleanTitle(rawTitle, catalogName || 'Produto Mercado Livre'),
     price, originalPrice: original || null, discount,
     currency: item.currency_id || catalog?.currency_id || 'BRL',
     permalink: item.permalink || buildItemPermalink(itemId) || catalog?.permalink || null,
@@ -163,7 +171,7 @@ export async function discoverMercadoLivre() {
             item = await getFullItem(itemId).catch(() => item);
           }
           const promotions = await getPromotions(itemId);
-          const normalized = normalize(item, keyword, 'catalog_items', productIndex * 100 + itemIndex + 1, promotions, product);
+          const normalized = normalize(item, keyword, 'catalog_items', itemIndex + 1, promotions, product);
           if (!valid(normalized)) continue;
           stats.searchItems++; stats.searchValid++; stats.validProducts++;
           if (normalized.discount > 0) stats.discountedProducts++;
