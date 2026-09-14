@@ -7,7 +7,7 @@ const MAX = Number(env.ML_MAX_OFFERS || 10);
 const MIN_DISCOUNT = Number(env.ML_MIN_DISCOUNT || 0);
 const ACCESS_TOKEN = env.ML_ACCESS_TOKEN || '';
 const CATALOG_LIMIT = Number(env.ML_CATALOG_LIMIT || 8);
-const ITEMS_PER_PRODUCT = Number(env.ML_ITEMS_PER_PRODUCT || 100);
+const ITEMS_PER_PRODUCT = Number(env.ML_ITEMS_PER_PRODUCT || 10);
 const DETAIL_CHECKS = Number(env.ML_DETAIL_CHECKS || 20);
 const PROMOTION_TYPES = new Set(['DEAL','MARKETPLACE_CAMPAIGN','DOD','LIGHTNING','VOLUME','PRICE_DISCOUNT','PRE_NEGOTIATED','SELLER_CAMPAIGN','SMART','PRICE_MATCHING','UNHEALTHY_STOCK','SELLER_COUPON_CAMPAIGN']);
 
@@ -37,20 +37,12 @@ async function searchCatalog(keyword) {
   return mlGet(`/products/search?status=active&site_id=${SITE_ID}&q=${encodeURIComponent(keyword)}&limit=${CATALOG_LIMIT}`);
 }
 async function getCatalogProduct(productId) {
-  try {
-    return await mlGet(`/products/${encodeURIComponent(productId)}`);
-  } catch {
-    return null;
-  }
+  try { return await mlGet(`/products/${encodeURIComponent(productId)}`); } catch { return null; }
 }
 async function getCatalogItems(productId, onlyDiscount = false) {
   const filter = onlyDiscount ? `&discount=${Math.max(10, MIN_DISCOUNT)}-100` : '';
-  try {
-    const result = await mlGet(`/products/${encodeURIComponent(productId)}/items?limit=${ITEMS_PER_PRODUCT}${filter}`);
-    return result.results || [];
-  } catch {
-    return [];
-  }
+  const result = await mlGet(`/products/${encodeURIComponent(productId)}/items?limit=${ITEMS_PER_PRODUCT}${filter}`);
+  return Array.isArray(result.results) ? result.results : [];
 }
 async function getFullItem(itemId) {
   return mlGet(`/items/${encodeURIComponent(itemId)}`);
@@ -59,22 +51,14 @@ async function getPromotions(itemId) {
   try {
     const result = await mlGet(`/seller-promotions/items/${encodeURIComponent(itemId)}?app_version=v2`);
     if (!Array.isArray(result)) return [];
-    return result
-      .filter(p => PROMOTION_TYPES.has(String(p.type || '')))
+    return result.filter(p => PROMOTION_TYPES.has(String(p.type || '')))
       .filter(p => ['active','started','candidate'].includes(String(p.status || '').toLowerCase()))
-      .map(p => ({
-        type: p.type,
-        status: p.status,
-        name: p.name || '',
-        couponCode: p.coupon_code || null,
+      .map(p => ({ type: p.type, status: p.status, name: p.name || '', couponCode: p.coupon_code || null,
         fixedPercentage: Number.isFinite(Number(p.fixed_percentage)) ? Number(p.fixed_percentage) : null,
         fixedAmount: Number.isFinite(Number(p.fixed_amount)) ? Number(p.fixed_amount) : null,
         minPurchaseAmount: Number.isFinite(Number(p.min_purchase_amount)) ? Number(p.min_purchase_amount) : null,
-        maxPurchaseAmount: Number.isFinite(Number(p.max_purchase_amount)) ? Number(p.max_purchase_amount) : null
-      }));
-  } catch {
-    return [];
-  }
+        maxPurchaseAmount: Number.isFinite(Number(p.max_purchase_amount)) ? Number(p.max_purchase_amount) : null }));
+  } catch { return []; }
 }
 function signals(item) {
   const values = [];
@@ -86,7 +70,11 @@ function signals(item) {
   return [...new Set(values)];
 }
 function reputation(item) {
-  return item.seller?.seller_reputation?.level_id || item.seller?.reputation_level_id || '';
+  return item?.seller?.seller_reputation?.level_id || item?.seller?.reputation_level_id || item?.seller_reputation?.level_id || '';
+}
+function buildItemPermalink(itemId) {
+  const id = String(itemId || '');
+  return id.startsWith('MLB') ? `https://produto.mercadolivre.com.br/${id.replace(/^MLB/, 'MLB-')}` : null;
 }
 function normalize(item, keyword, source, rank = null, promotions = [], catalog = null) {
   const price = Number(item.price || 0);
@@ -94,32 +82,22 @@ function normalize(item, keyword, source, rank = null, promotions = [], catalog 
   const discount = original > price && original > 0 ? Math.round((1 - price / original) * 100) : 0;
   const promoTypes = [...new Set([...promotions.map(p => p.type), ...signals(item)])].filter(Boolean);
   const coupon = promotions.find(p => p.type === 'SELLER_COUPON_CAMPAIGN');
+  const itemId = item.id || item.item_id;
   return {
-    id: item.id || item.item_id,
-    keyword,
-    source,
-    rank,
-    title: item.title || catalog?.name || 'Produto Mercado Livre',
-    price,
-    originalPrice: original || null,
-    discount,
+    id: itemId, keyword, source, rank,
+    title: item.title || catalog?.name || catalog?.family_name || 'Produto Mercado Livre',
+    price, originalPrice: original || null, discount,
     currency: item.currency_id || catalog?.currency_id || 'BRL',
-    permalink: item.permalink || catalog?.permalink || null,
-    thumbnail: item.thumbnail || catalog?.pictures?.[0]?.url || null,
+    permalink: item.permalink || buildItemPermalink(itemId) || catalog?.permalink || null,
+    thumbnail: item.thumbnail || catalog?.pictures?.[0]?.url || catalog?.pictures?.[0]?.secure_url || null,
     seller: item.seller?.nickname || item.seller_id || '',
-    sellerReputation: reputation(item),
-    condition: item.condition || null,
-    availableQuantity: item.available_quantity ?? null,
-    soldQuantity: item.sold_quantity ?? null,
+    sellerReputation: reputation(item), condition: item.condition || 'new',
+    availableQuantity: item.available_quantity ?? null, soldQuantity: item.sold_quantity ?? null,
     shipping: item.shipping?.free_shipping === true || item.shipping?.tags?.includes('mandatory_free_shipping') ? 'grátis' : 'pago/variável',
-    promotions,
-    promotionTypes: promoTypes,
+    promotions, promotionTypes: promoTypes,
     hasPromotion: promotions.length > 0 || promoTypes.length > 0,
-    couponCode: coupon?.couponCode || null,
-    couponPercentage: coupon?.fixedPercentage || null,
-    couponAmount: coupon?.fixedAmount || null,
-    affiliateLink: null,
-    affiliateStatus: 'PENDENTE_GERACAO_NO_PORTAL'
+    couponCode: coupon?.couponCode || null, couponPercentage: coupon?.fixedPercentage || null, couponAmount: coupon?.fixedAmount || null,
+    affiliateLink: null, affiliateStatus: 'PENDENTE_GERACAO_NO_PORTAL'
   };
 }
 function valid(item) {
@@ -138,92 +116,53 @@ function score(item) {
 export async function discoverMercadoLivre() {
   const errors = [];
   const collected = [];
-  const stats = {
-    searchRequests: 0,
-    searchItems: 0,
-    searchValid: 0,
-    detailChecks: 0,
-    catalogProducts: 0,
-    catalogItems: 0,
-    discountedCatalogItems: 0,
-    validProducts: 0,
-    discountedProducts: 0,
-    promotedItems: 0,
-    couponItems: 0
-  };
+  const stats = { searchRequests: 0, searchItems: 0, searchValid: 0, detailChecks: 0, catalogProducts: 0, catalogItems: 0,
+    discountedCatalogItems: 0, validProducts: 0, discountedProducts: 0, promotedItems: 0, couponItems: 0 };
   const token = await validateToken();
   if (!token.valid) {
     if (token.error) errors.push(`Token do Mercado Livre inválido ou ausente: ${token.error}`);
     return { offers: [], errors, authenticated: false, tokenConfigured: token.configured, tokenUserId: null, stats, fallbackUsed: false, minDiscount: MIN_DISCOUNT };
   }
-
   const seen = new Set();
   for (const keyword of keywords) {
     stats.searchRequests++;
     try {
       const catalog = await searchCatalog(keyword);
-      const products = catalog.results || [];
+      const products = Array.isArray(catalog.results) ? catalog.results : [];
       stats.catalogProducts += products.length;
-
-      for (const [productIndex, product] of products.entries()) {
-        const productDetail = product?.permalink ? product : await getCatalogProduct(product.id);
-        const discounted = await getCatalogItems(product.id, true);
-        const fallback = discounted.length ? discounted : await getCatalogItems(product.id, false);
+      for (const [productIndex, productSummary] of products.entries()) {
+        const product = await getCatalogProduct(productSummary.id) || productSummary;
+        const discounted = await getCatalogItems(product.id, true).catch(() => []);
+        const fallback = discounted.length ? discounted : await getCatalogItems(product.id, false).catch(() => []);
         stats.discountedCatalogItems += discounted.length;
         stats.catalogItems += fallback.length;
-
         for (const [itemIndex, candidate] of fallback.entries()) {
           const itemId = candidate?.item_id || candidate?.id;
           if (!itemId || seen.has(itemId)) continue;
           seen.add(itemId);
-
-          let item = {
-            ...candidate,
-            id: itemId,
-            seller: candidate.seller || { reputation_level_id: candidate.reputation_level_id || '' }
-          };
+          let item = { ...candidate, id: itemId };
           if (stats.detailChecks < DETAIL_CHECKS) {
             stats.detailChecks++;
             item = await getFullItem(itemId).catch(() => item);
           }
-
-          const promotions = stats.detailChecks <= DETAIL_CHECKS ? await getPromotions(itemId) : [];
-          const normalized = normalize(item, keyword, 'catalog_items', productIndex * 100 + itemIndex + 1, promotions, productDetail);
+          const promotions = await getPromotions(itemId);
+          const normalized = normalize(item, keyword, 'catalog_items', productIndex * 100 + itemIndex + 1, promotions, product);
           if (!valid(normalized)) continue;
-
-          stats.searchItems++;
-          stats.searchValid++;
-          stats.validProducts++;
+          stats.searchItems++; stats.searchValid++; stats.validProducts++;
           if (normalized.discount > 0) stats.discountedProducts++;
           if (normalized.hasPromotion) stats.promotedItems++;
           if (normalized.couponCode || normalized.couponPercentage || normalized.couponAmount) stats.couponItems++;
           collected.push({ ...normalized, score: score(normalized) });
-
           if (collected.length >= MAX * 5) break;
         }
         if (collected.length >= MAX * 5) break;
       }
-    } catch (error) {
-      errors.push(`Catálogo (${keyword}): ${error.message}`);
-    }
+    } catch (error) { errors.push(`Catálogo (${keyword}): ${error.message}`); }
     if (collected.length >= MAX * 5) break;
   }
-
   const unique = [...new Map(collected.map(item => [item.id, item])).values()]
-    .filter(valid)
-    .sort((a, b) => b.score - a.score || b.discount - a.discount || a.price - b.price)
-    .slice(0, MAX);
-
-  return {
-    offers: unique,
-    errors,
-    authenticated: true,
-    tokenConfigured: true,
-    tokenUserId: token.userId || null,
-    stats,
-    fallbackUsed: true,
-    minDiscount: MIN_DISCOUNT
-  };
+    .filter(valid).sort((a, b) => b.score - a.score || b.discount - a.discount || a.price - b.price).slice(0, MAX);
+  return { offers: unique, errors, authenticated: true, tokenConfigured: true, tokenUserId: token.userId || null, stats, fallbackUsed: true, minDiscount: MIN_DISCOUNT };
 }
 function promotionText(item) {
   const lines = [];
