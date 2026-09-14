@@ -5,7 +5,7 @@ const MAX = Number(env.ML_MAX_OFFERS || 10);
 const MIN_DISCOUNT = Number(env.ML_MIN_DISCOUNT || 15);
 const ACCESS_TOKEN = env.ML_ACCESS_TOKEN || '';
 const CATALOG_LIMIT = Number(env.ML_CATALOG_LIMIT || 10);
-const CHILD_LIMIT = Number(env.ML_CHILD_LIMIT || 5);
+const ITEM_LIMIT = Number(env.ML_ITEM_LIMIT || 20);
 const ENABLE_FALLBACK = String(env.ML_FALLBACK || 'true').toLowerCase() === 'true';
 
 function money(value) {
@@ -52,66 +52,27 @@ async function searchCatalog(keyword) {
   return mlGet(`/products/search?status=active&site_id=MLB&q=${query}&limit=${CATALOG_LIMIT}`);
 }
 
-async function getCatalogWinner(productId, parentId = null) {
-  const product = await mlGet(`/products/${encodeURIComponent(productId)}`);
-  const candidates = [product];
-  const seen = new Set([product.id]);
-  let childrenChecked = 0;
+async function getCatalogOffers(productId) {
+  const encodedId = encodeURIComponent(productId);
 
-  const addProduct = (candidate) => {
-    if (!candidate?.id || seen.has(candidate.id)) return;
-    seen.add(candidate.id);
-    candidates.push(candidate);
-  };
+  // O endpoint oficial de concorrência lista os anúncios associados à página
+  // de produto, mesmo quando buy_box_winner é null. O filtro discount evita
+  // depender exclusivamente do vencedor do catálogo para encontrar ofertas.
+  let result = await mlGet(`/products/${encodedId}/items?discount=${MIN_DISCOUNT}-100&limit=${ITEM_LIMIT}`);
+  let items = result.results || [];
 
-  const directChildren = Array.isArray(product.children_ids) ? product.children_ids : [];
-  for (const childId of directChildren.slice(0, CHILD_LIMIT)) {
-    try {
-      addProduct(await mlGet(`/products/${encodeURIComponent(childId)}`));
-      childrenChecked++;
-    } catch (error) {
-      console.error(`Falha no filho ${childId} do produto ${productId}: ${error.message}`);
-    }
+  // Se não houver desconto suficiente, buscamos alguns concorrentes para o
+  // fallback. Assim ainda podemos diagnosticar preço/estoque sem inventar oferta.
+  if (!items.length && ENABLE_FALLBACK) {
+    result = await mlGet(`/products/${encodedId}/items?limit=${ITEM_LIMIT}`);
+    items = result.results || [];
   }
 
-  // A busca de catálogo pode retornar um produto terminal (children_ids vazio)
-  // que aponta para um parent_id. Nesse caso, consultamos o pai e seus irmãos
-  // para localizar o anúncio vencedor do catálogo.
-  if (!candidates.some(candidate => candidate.buy_box_winner?.item_id || candidate.buy_box_winner?.item?.id) && (parentId || product.parent_id)) {
-    const resolvedParentId = parentId || product.parent_id;
-    try {
-      const parent = await mlGet(`/products/${encodeURIComponent(resolvedParentId)}`);
-      addProduct(parent);
+  return items;
+}
 
-      const parentChildren = Array.isArray(parent.children_ids) ? parent.children_ids : [];
-      for (const childId of parentChildren.slice(0, CHILD_LIMIT)) {
-        if (seen.has(childId)) continue;
-        try {
-          addProduct(await mlGet(`/products/${encodeURIComponent(childId)}`));
-          childrenChecked++;
-        } catch (error) {
-          console.error(`Falha no filho ${childId} do pai ${resolvedParentId}: ${error.message}`);
-        }
-      }
-    } catch (error) {
-      console.error(`Falha no produto pai ${resolvedParentId} de ${productId}: ${error.message}`);
-    }
-  }
-
-  for (const candidate of candidates) {
-    const winnerId = candidate.buy_box_winner?.item_id || candidate.buy_box_winner?.item?.id || null;
-    if (!winnerId) continue;
-
-    const item = await mlGet(`/items/${encodeURIComponent(winnerId)}`);
-    return {
-      product: candidate,
-      item,
-      fromChild: candidate.id !== product.id,
-      childrenChecked
-    };
-  }
-
-  return { product, item: null, fromChild: false, childrenChecked };
+async function getFullItem(itemId) {
+  return mlGet(`/items/${encodeURIComponent(itemId)}`);
 }
 
 function reputationLevel(item) {
@@ -182,9 +143,9 @@ export async function discoverMercadoLivre() {
   const errors = [];
   const stats = {
     catalogProducts: 0,
-    parentProducts: 0,
-    childrenChecked: 0,
-    childWinners: 0,
+    catalogPagesChecked: 0,
+    competitorItems: 0,
+    discountedItems: 0,
     winners: 0,
     validProducts: 0,
     discountedProducts: 0
@@ -205,28 +166,45 @@ export async function discoverMercadoLivre() {
 
       for (const product of products) {
         try {
-          if ((Array.isArray(product.children_ids) && product.children_ids.length > 0) || product.parent_id) {
-            stats.parentProducts++;
+          stats.catalogPagesChecked++;
+          const candidates = await getCatalogOffers(product.id);
+          stats.competitorItems += candidates.length;
+
+          const uniqueIds = [...new Set(candidates.map(candidate => candidate.item_id).filter(Boolean))];
+          if (uniqueIds.length === 0) continue;
+
+          // Prioriza os maiores descontos e, em empate, os menores preços.
+          const ranked = [...candidates].sort((a, b) => {
+            const discountA = Number(a.original_price) > Number(a.price) ? (1 - Number(a.price) / Number(a.original_price)) : 0;
+            const discountB = Number(b.original_price) > Number(b.price) ? (1 - Number(b.price) / Number(b.original_price)) : 0;
+            return discountB - discountA || Number(a.price || Infinity) - Number(b.price || Infinity);
+          });
+
+          for (const candidate of ranked.slice(0, 5)) {
+            try {
+              const fullItem = await getFullItem(candidate.item_id);
+              const item = normalize(fullItem, keyword, product);
+              if (!basicEligible(item)) continue;
+
+              stats.validProducts++;
+              if (item.discount >= MIN_DISCOUNT) stats.discountedItems++;
+              if (item.discount >= MIN_DISCOUNT) stats.discountedProducts++;
+
+              const scored = { ...item, score: score(item) };
+              if (eligible(item)) all.push(scored);
+              else if (ENABLE_FALLBACK) fallback.push(scored);
+
+              // Um bom anúncio já é suficiente para representar esta página.
+              if (eligible(item)) {
+                stats.winners++;
+                break;
+              }
+            } catch (error) {
+              console.error(`Falha no anúncio ${candidate.item_id} (${keyword}): ${error.message}`);
+            }
           }
-
-          const winner = await getCatalogWinner(product.id, product.parent_id || null);
-          stats.childrenChecked += winner.childrenChecked || 0;
-          if (!winner.item) continue;
-
-          stats.winners++;
-          if (winner.fromChild) stats.childWinners++;
-
-          const item = normalize(winner.item, keyword, winner.product);
-          if (!basicEligible(item)) continue;
-          stats.validProducts++;
-
-          if (item.discount >= MIN_DISCOUNT) stats.discountedProducts++;
-          const candidate = { ...item, score: score(item) };
-
-          if (eligible(item)) all.push(candidate);
-          else if (ENABLE_FALLBACK) fallback.push(candidate);
         } catch (error) {
-          console.error(`Falha no detalhe do produto ${product.id} (${keyword}): ${error.message}`);
+          console.error(`Falha na página de produto ${product.id} (${keyword}): ${error.message}`);
         }
       }
     } catch (error) {
