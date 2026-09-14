@@ -76,6 +76,23 @@ function buildItemPermalink(itemId) {
   const id = String(itemId || '');
   return id.startsWith('MLB') ? `https://produto.mercadolivre.com.br/${id.replace(/^MLB/, 'MLB-')}` : null;
 }
+function cleanTitle(rawTitle, fallback = 'Produto Mercado Livre') {
+  const title = String(rawTitle || '').replace(/\s+/g, ' ').trim();
+  if (!title) return fallback;
+  const tokens = title.split(' ');
+  if (tokens.length <= 16) return title;
+  const half = Math.max(8, Math.floor(tokens.length / 2));
+  const left = tokens.slice(0, half).join(' ');
+  const right = tokens.slice(half).join(' ');
+  const similarity = left.toLowerCase().split(' ').filter((word, index, arr) => right.toLowerCase().includes(word) && arr.indexOf(word) === index).length;
+  if (similarity >= Math.min(6, Math.floor(half / 2))) return left;
+  return tokens.slice(0, 18).join(' ') + '…';
+}
+function sellerName(item) {
+  const nickname = item?.seller?.nickname;
+  if (nickname && !/^\d+$/.test(String(nickname))) return String(nickname);
+  return 'Mercado Livre';
+}
 function normalize(item, keyword, source, rank = null, promotions = [], catalog = null) {
   const price = Number(item.price || 0);
   const original = Number(item.original_price || item.base_price || 0);
@@ -83,15 +100,15 @@ function normalize(item, keyword, source, rank = null, promotions = [], catalog 
   const promoTypes = [...new Set([...promotions.map(p => p.type), ...signals(item)])].filter(Boolean);
   const coupon = promotions.find(p => p.type === 'SELLER_COUPON_CAMPAIGN');
   const itemId = item.id || item.item_id;
+  const catalogName = catalog?.name || catalog?.family_name || '';
   return {
     id: itemId, keyword, source, rank,
-    title: item.title || catalog?.name || catalog?.family_name || 'Produto Mercado Livre',
+    title: cleanTitle(item.title || catalogName, catalogName || 'Produto Mercado Livre'),
     price, originalPrice: original || null, discount,
     currency: item.currency_id || catalog?.currency_id || 'BRL',
     permalink: item.permalink || buildItemPermalink(itemId) || catalog?.permalink || null,
     thumbnail: item.thumbnail || catalog?.pictures?.[0]?.url || catalog?.pictures?.[0]?.secure_url || null,
-    seller: item.seller?.nickname || item.seller_id || '',
-    sellerReputation: reputation(item), condition: item.condition || 'new',
+    seller: sellerName(item), sellerReputation: reputation(item), condition: item.condition || 'new',
     availableQuantity: item.available_quantity ?? null, soldQuantity: item.sold_quantity ?? null,
     shipping: item.shipping?.free_shipping === true || item.shipping?.tags?.includes('mandatory_free_shipping') ? 'grátis' : 'pago/variável',
     promotions, promotionTypes: promoTypes,
