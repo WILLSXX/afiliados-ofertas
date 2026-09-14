@@ -15,14 +15,25 @@ async function get(path, auth = true) {
 }
 
 function compact(data) {
-  if (data && typeof data === 'object') {
-    const clone = structuredClone(data);
-    for (const key of ['access_token', 'refresh_token', 'client_secret', 'secret_key']) {
-      if (key in clone) clone[key] = '[OCULTO]';
+  if (!data || typeof data !== 'object') return data;
+  const clone = structuredClone(data);
+  const redact = new Set([
+    'access_token', 'refresh_token', 'client_secret', 'secret_key',
+    'email', 'secure_email', 'identification', 'address', 'phone',
+    'alternative_phone', 'first_name', 'last_name', 'context'
+  ]);
+
+  function walk(value) {
+    if (!value || typeof value !== 'object') return value;
+    if (Array.isArray(value)) return value.map(walk);
+    for (const [key, child] of Object.entries(value)) {
+      if (redact.has(key)) value[key] = '[OCULTO]';
+      else value[key] = walk(child);
     }
-    return clone;
+    return value;
   }
-  return data;
+
+  return walk(clone);
 }
 
 function print(label, result) {
@@ -51,14 +62,12 @@ if (!TOKEN) {
   print('7. /sites/MLB/search?seller_id={USER_ID}', await get(`/sites/MLB/search?seller_id=${USER_ID}&limit=5`));
   print('8. /users/{USER_ID}/items/search', await get(`/users/${USER_ID}/items/search?status=active&limit=5`));
 
-  // Rotas alternativas oficiais para descobrir produtos/catálogo.
   for (const keyword of KEYWORDS) {
     const q = encodeURIComponent(keyword);
     print(`9. /products/search?q=${keyword}`, await get(`/products/search?status=active&site_id=MLB&q=${q}&limit=5`));
     print(`10. /sites/MLB/domain_discovery/search?q=${keyword}`, await get(`/sites/MLB/domain_discovery/search?q=${q}&limit=3`));
   }
 
-  // Detalhe de item público, usando um ID que já pertence ao próprio usuário.
   const ownItems = await get(`/users/${USER_ID}/items/search?status=active&limit=1`);
   const itemId = ownItems.data?.results?.[0];
   if (itemId) print(`11. /items/${itemId}`, await get(`/items/${itemId}`));
