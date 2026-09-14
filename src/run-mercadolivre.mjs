@@ -9,10 +9,9 @@ const lines = [
   '# Ofertas Mercado Livre — candidatos', '',
   `Atualizado em: ${now}`, '',
   `Status da API: ${authenticated ? 'AUTENTICADA' : 'AGUARDANDO ML_ACCESS_TOKEN'}`, '',
-  `Diagnóstico: ${stats.searchItems} itens encontrados na busca direta → ${stats.searchValid} anúncios válidos → ${stats.discountedProducts} com desconto → ${stats.promotedItems} com promoção → ${stats.couponItems} com sinal de cupom.`, '',
-  `Complemento de catálogo: ${stats.catalogProducts} produtos → ${stats.catalogItems} anúncios consultados.`, '',
-  `Filtro configurado: ${minDiscount}% OFF mínimo, mas o desconto não é obrigatório para entrar na lista.`, '',
-  '> O sistema usa primeiro anúncios reais da busca do Mercado Livre e usa o catálogo apenas como complemento.', '',
+  `Descoberta por catálogo: ${stats.catalogProducts} produtos → ${stats.catalogItems} anúncios consultados → ${stats.searchValid} anúncios válidos → ${stats.discountedProducts} com desconto.`, '',
+  `Candidatos finais: ${offers.length}`, '',
+  `Filtro configurado: ${minDiscount}% OFF mínimo. A descoberta prioriza anúncios com desconto e usa o catálogo como fonte oficial de anúncios da página de produto.`, '',
   '> Antes de divulgar, gere o link de afiliado pelo Gerador de Links/Barra de Afiliados oficial do Mercado Livre.', ''
 ];
 
@@ -51,8 +50,7 @@ if (summary) {
     '# 🔎 Ofertas Mercado Livre', '',
     `Atualizado em: ${now}`, '',
     `**Status da API:** ${authenticated ? 'AUTENTICADA' : 'AGUARDANDO ML_ACCESS_TOKEN'}`, '',
-    `**Busca direta:** ${stats.searchItems} itens → ${stats.searchValid} válidos → ${stats.discountedProducts} com desconto → ${stats.promotedItems} com promoção → ${stats.couponItems} com sinal de cupom.`, '',
-    `**Catálogo complementar:** ${stats.catalogProducts} produtos → ${stats.catalogItems} anúncios consultados.`, '',
+    `**Descoberta por catálogo:** ${stats.catalogProducts} produtos → ${stats.catalogItems} anúncios → ${stats.searchValid} válidos → ${stats.discountedProducts} com desconto.`, '',
     `**Candidatos finais:** ${offers.length}`, ''
   ];
   if (errors.length) {
@@ -76,6 +74,5 @@ if (summary) {
 }
 
 console.log(`Mercado Livre: ${offers.length} candidatos encontrados.`);
-console.log(`Busca direta: ${stats.searchItems} itens, ${stats.searchValid} válidos, ${stats.discountedProducts} com desconto, ${stats.promotedItems} com promoção, ${stats.couponItems} com sinal de cupom.`);
-console.log(`Catálogo: ${stats.catalogProducts} produtos, ${stats.catalogItems} anúncios consultados.`);
+console.log(`Catálogo: ${stats.catalogProducts} produtos, ${stats.catalogItems} anúncios, ${stats.searchValid} válidos, ${stats.discountedProducts} com desconto.`);
 if (errors.length) console.log(`Mercado Livre: ${errors.length} diagnóstico(s) registrado(s).`);
