@@ -5,6 +5,7 @@ const MAX = Number(env.ML_MAX_OFFERS || 10);
 const MIN_DISCOUNT = Number(env.ML_MIN_DISCOUNT || 15);
 const ACCESS_TOKEN = env.ML_ACCESS_TOKEN || '';
 const CATALOG_LIMIT = Number(env.ML_CATALOG_LIMIT || 10);
+const CHILD_LIMIT = Number(env.ML_CHILD_LIMIT || 5);
 const ENABLE_FALLBACK = String(env.ML_FALLBACK || 'true').toLowerCase() === 'true';
 
 function money(value) {
@@ -53,15 +54,35 @@ async function searchCatalog(keyword) {
 
 async function getCatalogWinner(productId) {
   const product = await mlGet(`/products/${encodeURIComponent(productId)}`);
-  const winnerId = product.buy_box_winner?.item_id || product.buy_box_winner?.item?.id || null;
-  if (!winnerId) return null;
+  const candidates = [product];
+  const childIds = Array.isArray(product.children_ids) ? product.children_ids.slice(0, CHILD_LIMIT) : [];
 
-  const item = await mlGet(`/items/${encodeURIComponent(winnerId)}`);
-  return { product, item };
+  for (const childId of childIds) {
+    try {
+      candidates.push(await mlGet(`/products/${encodeURIComponent(childId)}`));
+    } catch (error) {
+      console.error(`Falha no filho ${childId} do produto ${productId}: ${error.message}`);
+    }
+  }
+
+  for (const candidate of candidates) {
+    const winnerId = candidate.buy_box_winner?.item_id || candidate.buy_box_winner?.item?.id || null;
+    if (!winnerId) continue;
+
+    const item = await mlGet(`/items/${encodeURIComponent(winnerId)}`);
+    return {
+      product: candidate,
+      item,
+      fromChild: candidate.id !== product.id,
+      childrenChecked: childIds.length
+    };
+  }
+
+  return { product, item: null, fromChild: false, childrenChecked: childIds.length };
 }
 
 function reputationLevel(item) {
-  const level = item.seller?.seller_reputation?.level_id || '';
+  const level = item.seller?.seller_reputation?.level_id || item.seller?.reputation_level_id || '';
   if (level) return level;
 
   const status = String(item.seller?.seller_reputation?.power_seller_status || '').toLowerCase();
@@ -126,7 +147,15 @@ export async function discoverMercadoLivre() {
   const all = [];
   const fallback = [];
   const errors = [];
-  const stats = { catalogProducts: 0, winners: 0, validProducts: 0, discountedProducts: 0 };
+  const stats = {
+    catalogProducts: 0,
+    parentProducts: 0,
+    childrenChecked: 0,
+    childWinners: 0,
+    winners: 0,
+    validProducts: 0,
+    discountedProducts: 0
+  };
   const token = await validateToken();
 
   if (!token.configured) {
@@ -143,9 +172,16 @@ export async function discoverMercadoLivre() {
 
       for (const product of products) {
         try {
+          if (Array.isArray(product.children_ids) && product.children_ids.length > 0) {
+            stats.parentProducts++;
+          }
+
           const winner = await getCatalogWinner(product.id);
-          if (!winner) continue;
+          stats.childrenChecked += winner.childrenChecked || 0;
+          if (!winner.item) continue;
+
           stats.winners++;
+          if (winner.fromChild) stats.childWinners++;
 
           const item = normalize(winner.item, keyword, winner.product);
           if (!basicEligible(item)) continue;
