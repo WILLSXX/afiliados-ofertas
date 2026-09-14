@@ -52,16 +52,49 @@ async function searchCatalog(keyword) {
   return mlGet(`/products/search?status=active&site_id=MLB&q=${query}&limit=${CATALOG_LIMIT}`);
 }
 
-async function getCatalogWinner(productId) {
+async function getCatalogWinner(productId, parentId = null) {
   const product = await mlGet(`/products/${encodeURIComponent(productId)}`);
   const candidates = [product];
-  const childIds = Array.isArray(product.children_ids) ? product.children_ids.slice(0, CHILD_LIMIT) : [];
+  const seen = new Set([product.id]);
+  let childrenChecked = 0;
 
-  for (const childId of childIds) {
+  const addProduct = (candidate) => {
+    if (!candidate?.id || seen.has(candidate.id)) return;
+    seen.add(candidate.id);
+    candidates.push(candidate);
+  };
+
+  const directChildren = Array.isArray(product.children_ids) ? product.children_ids : [];
+  for (const childId of directChildren.slice(0, CHILD_LIMIT)) {
     try {
-      candidates.push(await mlGet(`/products/${encodeURIComponent(childId)}`));
+      addProduct(await mlGet(`/products/${encodeURIComponent(childId)}`));
+      childrenChecked++;
     } catch (error) {
       console.error(`Falha no filho ${childId} do produto ${productId}: ${error.message}`);
+    }
+  }
+
+  // A busca de catálogo pode retornar um produto terminal (children_ids vazio)
+  // que aponta para um parent_id. Nesse caso, consultamos o pai e seus irmãos
+  // para localizar o anúncio vencedor do catálogo.
+  if (!candidates.some(candidate => candidate.buy_box_winner?.item_id || candidate.buy_box_winner?.item?.id) && (parentId || product.parent_id)) {
+    const resolvedParentId = parentId || product.parent_id;
+    try {
+      const parent = await mlGet(`/products/${encodeURIComponent(resolvedParentId)}`);
+      addProduct(parent);
+
+      const parentChildren = Array.isArray(parent.children_ids) ? parent.children_ids : [];
+      for (const childId of parentChildren.slice(0, CHILD_LIMIT)) {
+        if (seen.has(childId)) continue;
+        try {
+          addProduct(await mlGet(`/products/${encodeURIComponent(childId)}`));
+          childrenChecked++;
+        } catch (error) {
+          console.error(`Falha no filho ${childId} do pai ${resolvedParentId}: ${error.message}`);
+        }
+      }
+    } catch (error) {
+      console.error(`Falha no produto pai ${resolvedParentId} de ${productId}: ${error.message}`);
     }
   }
 
@@ -74,11 +107,11 @@ async function getCatalogWinner(productId) {
       product: candidate,
       item,
       fromChild: candidate.id !== product.id,
-      childrenChecked: childIds.length
+      childrenChecked
     };
   }
 
-  return { product, item: null, fromChild: false, childrenChecked: childIds.length };
+  return { product, item: null, fromChild: false, childrenChecked };
 }
 
 function reputationLevel(item) {
@@ -172,11 +205,11 @@ export async function discoverMercadoLivre() {
 
       for (const product of products) {
         try {
-          if (Array.isArray(product.children_ids) && product.children_ids.length > 0) {
+          if ((Array.isArray(product.children_ids) && product.children_ids.length > 0) || product.parent_id) {
             stats.parentProducts++;
           }
 
-          const winner = await getCatalogWinner(product.id);
+          const winner = await getCatalogWinner(product.id, product.parent_id || null);
           stats.childrenChecked += winner.childrenChecked || 0;
           if (!winner.item) continue;
 
