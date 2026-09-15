@@ -5,7 +5,7 @@ const API_URL = 'https://open-api.affiliate.shopee.com.br/graphql';
 
 const env = process.env;
 const keywords = (env.KEYWORDS || 'ssd,memoria ram,monitor gamer,fone bluetooth,roteador').split(',').map(s => s.trim()).filter(Boolean);
-const MIN_DISCOUNT = Number(env.MIN_DISCOUNT || 20);
+const MIN_DISCOUNT = Number(env.MIN_DISCOUNT || 0);
 const MIN_RATING = Number(env.MIN_RATING || 4.5);
 const MIN_SALES = Number(env.MIN_SALES || 50);
 const MAX_OFFERS = Number(env.MAX_OFFERS || 5);
@@ -15,6 +15,13 @@ function money(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 'R$ --';
   return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+function percentRate(value) {
+  const n = Number(value || 0);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  const pct = n <= 1 ? n * 100 : n;
+  return Math.max(0, Math.min(100, pct));
 }
 
 function signPayload(appId, timestamp, payload, secret) {
@@ -55,23 +62,23 @@ async function getProducts(keyword) {
 }
 
 function score(p) {
-  const discount = Number(p.priceDiscountRate || 0) * 100;
+  const discount = percentRate(p.priceDiscountRate);
   const rating = Number(p.ratingStar || 0);
   const sales = Number(p.sales || 0);
-  const commission = Number(p.commissionRate || 0) * 100;
+  const commission = percentRate(p.commissionRate);
   return Math.round(Math.min(discount, 60) * 0.45 + Math.min(rating / 5 * 20, 20) * 0.2 + Math.min(Math.log10(sales + 1) * 10, 20) * 0.15 + Math.min(commission, 20) * 0.2);
 }
 
 function eligible(p) {
-  const discount = Number(p.priceDiscountRate || 0) * 100;
+  const discount = percentRate(p.priceDiscountRate);
   const rating = Number(p.ratingStar || 0);
   const sales = Number(p.sales || 0);
   return discount >= MIN_DISCOUNT && rating >= MIN_RATING && sales >= MIN_SALES && p.offerLink;
 }
 
 function formatOffer(p) {
-  const discount = Math.round(Number(p.priceDiscountRate || 0) * 100);
-  const commission = (Number(p.commissionRate || 0) * 100).toFixed(1);
+  const discount = Math.round(percentRate(p.priceDiscountRate));
+  const commission = percentRate(p.commissionRate).toFixed(1);
   const price = money(p.priceMin);
   const subId = subIds.length ? `\n🏷️ Sub-ID: ${subIds.join('/')}` : '';
   return `🔥 ${p.productName}\n\n💰 ${price}  |  ${discount}% OFF\n⭐ ${Number(p.ratingStar || 0).toFixed(1)}  |  🛒 ${Number(p.sales || 0)} vendas\n💵 Comissão estimada: ${commission}%${subId}\n\n🛒 COMPRAR AGORA:\n${p.offerLink}\n\n⚠️ Preço e estoque podem mudar sem aviso.`;
@@ -101,10 +108,10 @@ function buildMarkdown(offers, errors) {
     lines.push(`## ${index + 1}. ${offer.productName}`);
     lines.push('');
     lines.push(`- **Preço:** ${money(offer.priceMin)}`);
-    lines.push(`- **Desconto:** ${Math.round(Number(offer.priceDiscountRate || 0) * 100)}%`);
+    lines.push(`- **Desconto:** ${Math.round(percentRate(offer.priceDiscountRate))}%`);
     lines.push(`- **Nota:** ${Number(offer.ratingStar || 0).toFixed(1)}`);
     lines.push(`- **Vendas:** ${Number(offer.sales || 0)}`);
-    lines.push(`- **Comissão:** ${(Number(offer.commissionRate || 0) * 100).toFixed(1)}%`);
+    lines.push(`- **Comissão:** ${percentRate(offer.commissionRate).toFixed(1)}%`);
     lines.push(`- **Pontuação:** ${offer.score}/100`);
     lines.push(`- **Link afiliado:** ${offer.offerLink}`);
     lines.push('');
@@ -181,9 +188,9 @@ async function main() {
     }
     for (const [index, offer] of unique.entries()) {
       summaryLines.push(`## ${index + 1}. ${offer.productName}`);
-      summaryLines.push(`- 💰 **Preço:** ${money(offer.priceMin)} — **${Math.round(Number(offer.priceDiscountRate || 0) * 100)}% OFF**`);
+      summaryLines.push(`- 💰 **Preço:** ${money(offer.priceMin)} — **${Math.round(percentRate(offer.priceDiscountRate))}% OFF**`);
       summaryLines.push(`- ⭐ **Nota:** ${Number(offer.ratingStar || 0).toFixed(1)} | 🛒 **Vendas:** ${Number(offer.sales || 0)}`);
-      summaryLines.push(`- 💵 **Comissão estimada:** ${(Number(offer.commissionRate || 0) * 100).toFixed(1)}%`);
+      summaryLines.push(`- 💵 **Comissão estimada:** ${percentRate(offer.commissionRate).toFixed(1)}%`);
       summaryLines.push(`- 🛒 [Abrir oferta](${offer.offerLink})`);
       summaryLines.push('');
     }
