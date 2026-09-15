@@ -22,10 +22,17 @@ jobs:
       SHOPEE_APP_ID: ${{ secrets.SHOPEE_APP_ID }}
       SHOPEE_SECRET: ${{ secrets.SHOPEE_SECRET }}
       ML_ACCESS_TOKEN: ${{ secrets.ML_ACCESS_TOKEN }}
+      AMAZON_CLIENT_ID: ${{ secrets.AMAZON_CLIENT_ID }}
+      AMAZON_CLIENT_SECRET: ${{ secrets.AMAZON_CLIENT_SECRET }}
+      AMAZON_VERSION: ${{ secrets.AMAZON_VERSION }}
+      AMAZON_PARTNER_TAG: ${{ secrets.AMAZON_PARTNER_TAG }}
+      AWIN_API_TOKEN: ${{ secrets.AWIN_API_TOKEN }}
+      AWIN_PUBLISHER_ID: ${{ secrets.AWIN_PUBLISHER_ID }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       KEYWORDS: ssd,memoria ram,monitor gamer,fone bluetooth,roteador,teclado mecanico
       ML_KEYWORDS: celular,smart tv,notebook,ssd,memoria ram,monitor,fone bluetooth,roteador,power bank,ferramentas,casa,moda,eletrodomesticos
+      AMAZON_KEYWORDS: celular,smart tv,notebook,ssd,memoria ram,monitor gamer,fone bluetooth,roteador,power bank,teclado mecanico
       MIN_DISCOUNT: 0
       MIN_RATING: 4.5
       MIN_SALES: 50
@@ -40,6 +47,8 @@ jobs:
       ML_HIGHLIGHT_LIMIT: 20
       ML_MAX_CATEGORIES_PER_KEYWORD: 2
       ML_PROMOTION_CHECKS: 8
+      AMAZON_MAX_OFFERS: 10
+      AWIN_COUNTRY_CODE: BR
       SUB_ID: telegram,ofertas,tech
     steps:
       - name: Baixar projeto
@@ -70,5 +79,16 @@ jobs:
           path: |
             ofertas-shopee.md
             ofertas-shopee.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Testar Amazon e Awin
+        run: node src/run-amazon-awin.mjs
+      - name: Guardar relatório Amazon e Awin
+        uses: actions/upload-artifact@v4
+        with:
+          name: ofertas-amazon-awin
+          path: |
+            ofertas-amazon-awin.md
+            ofertas-amazon-awin.json
           if-no-files-found: error
           retention-days: 7
