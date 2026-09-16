@@ -6,19 +6,33 @@ const env = process.env;
 const keywords = (env.KEYWORDS || 'celular,smart tv,notebook,ssd,memoria ram,monitor gamer,fone bluetooth,fone gamer,teclado mecanico,mouse gamer,placa de video,roteador wifi,power bank,ferramentas,impressora,air fryer,cafeteira,casa')
   .split(',').map(s => s.trim()).filter(Boolean);
 const MIN_DISCOUNT = Number(env.MIN_DISCOUNT || 0);
-const MIN_RATING = Number(env.MIN_RATING || 4.5);
-const MIN_SALES = Number(env.MIN_SALES || 50);
+const MIN_RATING = Number(env.MIN_RATING || 4.6);
+const MIN_SALES = Number(env.MIN_SALES || 100);
+const MIN_PRICE = Number(env.MIN_PRICE || 25);
+const MIN_SCORE = Number(env.MIN_SCORE || 62);
+const MIN_COMMISSION = Number(env.MIN_COMMISSION || 3);
 const MAX_OFFERS = Number(env.MAX_OFFERS || 10);
 const MAX_PER_KEYWORD = Number(env.SHOPEE_MAX_PER_KEYWORD || 3);
 const MAX_PER_SHOP = Number(env.SHOPEE_MAX_PER_SHOP || 2);
 const subIds = (env.SUB_ID || 'telegram,ofertas,tech').split(',').map(s => s.trim()).filter(Boolean).slice(0, 5);
 
 const keywordWeights = {
-  celular: 1.25, 'smart tv': 1.2, notebook: 1.25, ssd: 1.2, 'memoria ram': 1.2,
-  'monitor gamer': 1.2, 'fone bluetooth': 1.05, 'fone gamer': 1.05, 'teclado mecanico': 1.0,
-  'mouse gamer': 1.0, 'placa de video': 1.2, 'roteador wifi': 1.0, 'power bank': 0.95,
-  ferramentas: 1.0, impressora: 1.0, 'air fryer': 1.0, cafeteira: 0.9, casa: 0.8
+  celular: 1.3, 'smart tv': 1.25, notebook: 1.3, ssd: 1.3, 'memoria ram': 1.25,
+  'monitor gamer': 1.2, 'fone bluetooth': 1.05, 'fone gamer': 1.1, 'teclado mecanico': 1.05,
+  'mouse gamer': 1.0, 'placa de video': 1.3, 'roteador wifi': 1.0, 'power bank': 0.95,
+  ferramentas: 1.0, impressora: 1.05, 'air fryer': 1.0, cafeteira: 0.95, casa: 0.75
 };
+
+const weakTitlePatterns = [
+  /\b(estátua|estatua|boneco|brinquedo|enfeite|decoração|decoracao|chaveiro|adesivo|lembrancinha)\b/i,
+  /\b(suporte de roteador|suporte roteador|suporte de parede para roteador)\b/i,
+  /\b(capa para celular|película|pelicula)\b/i,
+  /\b(kit\s+\d{2,})\b/i
+];
+
+const accessoryPatterns = [
+  /\b(cabo|adaptador|suporte|case|capa|película|pelicula|hub usb)\b/i
+];
 
 function money(value) {
   const n = Number(value);
@@ -39,30 +53,60 @@ async function shopeeRequest(query) {
   const body = JSON.stringify({ query });
   const timestamp = Math.floor(Date.now() / 1000);
   const signature = signPayload(env.SHOPEE_APP_ID, timestamp, body, env.SHOPEE_SECRET);
-  const response = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `SHA256 Credential=${env.SHOPEE_APP_ID}, Timestamp=${timestamp}, Signature=${signature}` }, body });
+  const response = await fetch(API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `SHA256 Credential=${env.SHOPEE_APP_ID}, Timestamp=${timestamp}, Signature=${signature}`
+    },
+    body
+  });
   const json = await response.json();
   if (!response.ok || json.errors?.length) throw new Error(`Shopee API: ${json.errors?.map(e => e.message).join('; ') || `HTTP ${response.status}`}`);
   return json.data;
 }
 async function getProducts(keyword) {
   const safeKeyword = JSON.stringify(keyword);
-  const query = `query { productOfferV2(keyword: ${safeKeyword}, listType: 0, sortType: 5, page: 1, limit: 50) { nodes { itemId productName productLink offerLink imageUrl priceMin priceMax priceDiscountRate sales ratingStar commissionRate commission shopId shopName shopType } pageInfo { page limit hasNextPage } } }`;
+  const query = `query { productOfferV2(keyword: ${safeKeyword}, listType: 0, sortType: 5, page: 1, limit: 60) { nodes { itemId productName productLink offerLink imageUrl priceMin priceMax priceDiscountRate sales ratingStar commissionRate commission shopId shopName shopType } pageInfo { page limit hasNextPage } } }`;
   const data = await shopeeRequest(query);
   return data.productOfferV2?.nodes || [];
 }
+function titleQuality(p) {
+  const title = String(p.productName || '').trim();
+  if (title.length < 16) return 0;
+  if (weakTitlePatterns.some(rx => rx.test(title))) return -30;
+  let bonus = 0;
+  if (/\b\d+(?:gb|tb|mb|w|hz|mah|wh|mm|pol|polegadas)\b/i.test(title)) bonus += 8;
+  if (/\b(16|32|64|128|256|512|1024|120|240|480|500|750|1200|1600|2400|3200|3600|6000)\b/.test(title)) bonus += 4;
+  if (/\b(samsung|apple|xiaomi|motorola|kingston|sandisk|corsair|logitech|razer|intel|amd|nvidia|philips|lg|electrolux|mondial|epson|canon|hp|acer|lenovo|asus|dell)\b/i.test(title)) bonus += 8;
+  if (accessoryPatterns.some(rx => rx.test(title))) bonus -= 5;
+  return bonus;
+}
 function score(p) {
-  const discount = percentRate(p.priceDiscountRate);
+  const discount = Math.min(percentRate(p.priceDiscountRate), 60);
   const rating = Number(p.ratingStar || 0);
   const sales = Number(p.sales || 0);
   const commission = percentRate(p.commissionRate);
   const demand = Math.min(Math.log10(sales + 1) * 10, 20);
   const relevance = keywordWeights[String(p.keyword || '').toLowerCase()] || 0.8;
   const price = Number(p.priceMin || 0);
-  const commercial = price >= 50 ? 5 : price >= 20 ? 2 : 0;
-  return Math.round(Math.min(60, discount) * 0.35 + Math.min(rating / 5 * 20, 20) * 0.15 + demand * 0.2 + Math.min(commission, 20) * 0.15 + commercial + relevance * 5);
+  const commercial = price >= 80 ? 8 : price >= 40 ? 5 : 2;
+  const ratingBonus = Math.max(0, Math.min(20, rating / 5 * 20));
+  const commissionBonus = Math.min(15, commission * 0.9);
+  return Math.round(Math.min(35, discount * 0.58) + ratingBonus * 0.22 + demand * 0.18 + commissionBonus + commercial + relevance * 5 + titleQuality(p));
 }
 function eligible(p) {
-  return percentRate(p.priceDiscountRate) >= MIN_DISCOUNT && Number(p.ratingStar || 0) >= MIN_RATING && Number(p.sales || 0) >= MIN_SALES && p.offerLink;
+  const discount = percentRate(p.priceDiscountRate);
+  const rating = Number(p.ratingStar || 0);
+  const sales = Number(p.sales || 0);
+  const price = Number(p.priceMin || 0);
+  const commission = percentRate(p.commissionRate);
+  const title = String(p.productName || '').trim();
+  if (!p.offerLink || !p.itemId || !title) return false;
+  if (discount < MIN_DISCOUNT || rating < MIN_RATING || sales < MIN_SALES) return false;
+  if (price < MIN_PRICE || commission < MIN_COMMISSION) return false;
+  if (weakTitlePatterns.some(rx => rx.test(title))) return false;
+  return score(p) >= MIN_SCORE;
 }
 function formatOffer(p) {
   const discount = Math.round(percentRate(p.priceDiscountRate));
@@ -73,11 +117,11 @@ function formatOffer(p) {
 }
 function buildMarkdown(offers, errors, stats) {
   const now = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-  const lines = ['# Ofertas Shopee', '', `Atualizado em: ${now}`, '', `Buscas: ${keywords.length} palavras-chave | candidatos elegíveis: ${stats.eligible} | máximo final: ${MAX_OFFERS}`, `Filtros: ${MIN_DISCOUNT}% OFF | nota >= ${MIN_RATING} | vendas >= ${MIN_SALES}`, ''];
+  const lines = ['# Ofertas Shopee', '', `Atualizado em: ${now}`, '', `Buscas: ${keywords.length} palavras-chave | candidatos aceitos: ${stats.accepted} | rejeitados por qualidade: ${stats.rejectedQuality} | máximo final: ${MAX_OFFERS}`, `Filtros: ${MIN_DISCOUNT}% OFF | nota >= ${MIN_RATING} | vendas >= ${MIN_SALES} | preço >= ${money(MIN_PRICE)} | comissão >= ${MIN_COMMISSION}% | score >= ${MIN_SCORE}`, ''];
   if (errors.length) lines.push('## Diagnóstico', '', ...errors.map(error => `- ${error}`), '');
   if (!offers.length) { lines.push('Nenhuma oferta atingiu os filtros atuais.'); return lines.join('\n'); }
   offers.forEach((offer, index) => {
-    lines.push(`## ${index + 1}. ${offer.productName}`, '', `- **Preço:** ${money(offer.priceMin)}`, `- **Desconto:** ${Math.round(percentRate(offer.priceDiscountRate))}%`, `- **Nota:** ${Number(offer.ratingStar || 0).toFixed(1)}`, `- **Vendas:** ${Number(offer.sales || 0)}`, `- **Comissão:** ${percentRate(offer.commissionRate).toFixed(1)}%`, `- **Palavra-chave:** ${offer.keyword}`, `- **Loja:** ${offer.shopName || '--'}`, `- **Pontuação:** ${offer.score}/100`, `- **Link afiliado:** ${offer.offerLink}`, '', '**Mensagem pronta:**', '', '```text', formatOffer(offer), '```', '', '---', '');
+    lines.push(`## ${index + 1}. ${offer.productName}`, '', `- **Preço:** ${money(offer.priceMin)}`, `- **Desconto:** ${Math.round(percentRate(offer.priceDiscountRate))}%`, `- **Nota:** ${Number(offer.ratingStar || 0).toFixed(1)}`, `- **Vendas:** ${Number(offer.sales || 0)}`, `- **Comissão:** ${percentRate(offer.commissionRate).toFixed(1)}%`, `- **Palavra-chave:** ${offer.keyword}`, `- **Loja:** ${offer.shopName || '--'}`, `- **Pontuação de qualidade:** ${offer.score}/100`, `- **Link afiliado:** ${offer.offerLink}`, '', '**Mensagem pronta:**', '', '```text', formatOffer(offer), '```', '', '---', '');
   });
   return lines.join('\n');
 }
@@ -91,18 +135,26 @@ async function main() {
   console.log(`Iniciando busca Shopee: ${keywords.join(', ')}`);
   const errors = [];
   const all = [];
-  const stats = { keywords: keywords.length, eligible: 0 };
+  const stats = { keywords: keywords.length, accepted: 0, rejectedQuality: 0 };
   if (!env.SHOPEE_APP_ID || !env.SHOPEE_SECRET) errors.push('SHOPEE_APP_ID/SHOPEE_SECRET ainda não configurados.');
   if (env.SHOPEE_APP_ID && env.SHOPEE_SECRET) {
     for (const keyword of keywords) {
       try {
         const products = await getProducts(keyword);
-        for (const p of products) if (eligible(p)) all.push({ ...p, keyword, score: score({ ...p, keyword }) });
-      } catch (error) { errors.push(`Falha em ${keyword}: ${error.message}`); console.error(errors.at(-1)); }
+        for (const p of products) {
+          const candidate = { ...p, keyword };
+          if (eligible(candidate)) all.push({ ...candidate, score: score(candidate) });
+          else stats.rejectedQuality++;
+        }
+      } catch (error) {
+        errors.push(`Falha em ${keyword}: ${error.message}`);
+        console.error(errors.at(-1));
+      }
     }
   }
-  stats.eligible = all.length;
-  const unique = [...new Map(all.map(p => [String(p.itemId), p])).values()].sort((a, b) => b.score - a.score || percentRate(b.priceDiscountRate) - percentRate(a.priceDiscountRate));
+  stats.accepted = all.length;
+  const unique = [...new Map(all.map(p => [String(p.itemId), p])).values()]
+    .sort((a, b) => b.score - a.score || percentRate(b.priceDiscountRate) - percentRate(a.priceDiscountRate) || Number(b.sales || 0) - Number(a.sales || 0));
   const selected = [];
   const keywordCount = new Map();
   const shopCount = new Map();
@@ -116,15 +168,15 @@ async function main() {
     shopCount.set(shop, (shopCount.get(shop) || 0) + 1);
     if (selected.length >= MAX_OFFERS) break;
   }
-  console.log(`Candidatos elegíveis: ${all.length}`);
+  console.log(`Candidatos aceitos por qualidade: ${all.length}`);
   console.log(`Ofertas finais diversificadas: ${selected.length}`);
   for (const p of selected) console.log(`\n${formatOffer(p)}`);
   fs.writeFileSync('ofertas-shopee.md', buildMarkdown(selected, errors, stats), 'utf8');
   fs.writeFileSync('ofertas-shopee.json', JSON.stringify({ generatedAt: new Date().toISOString(), authenticated: Boolean(env.SHOPEE_APP_ID && env.SHOPEE_SECRET), errors, stats, offers: selected }, null, 2), 'utf8');
   if (env.GITHUB_STEP_SUMMARY) {
     const now = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-    const summary = [`# 🛍️ Ofertas Shopee`, '', `Atualizado em: ${now}`, '', `**${stats.eligible} candidatos elegíveis** → **${selected.length} ofertas finais diversificadas**.`, ''];
-    for (const [index, offer] of selected.entries()) summary.push(`## ${index + 1}. ${offer.productName}`, `- 💰 **Preço:** ${money(offer.priceMin)} — **${Math.round(percentRate(offer.priceDiscountRate))}% OFF**`, `- ⭐ **Nota:** ${Number(offer.ratingStar || 0).toFixed(1)} | 🛒 **Vendas:** ${Number(offer.sales || 0)}`, `- 💵 **Comissão:** ${percentRate(offer.commissionRate).toFixed(1)}% | 🔎 **Busca:** ${offer.keyword}`, `- 🛒 [Abrir oferta](${offer.offerLink})`, '');
+    const summary = [`# 🛍️ Ofertas Shopee`, '', `Atualizado em: ${now}`, '', `**${stats.accepted} candidatos aceitos** → **${selected.length} ofertas finais com filtro de qualidade**.`, ''];
+    for (const [index, offer] of selected.entries()) summary.push(`## ${index + 1}. ${offer.productName}`, `- 💰 **Preço:** ${money(offer.priceMin)} — **${Math.round(percentRate(offer.priceDiscountRate))}% OFF**`, `- ⭐ **Nota:** ${Number(offer.ratingStar || 0).toFixed(1)} | 🛒 **Vendas:** ${Number(offer.sales || 0)}`, `- 💵 **Comissão:** ${percentRate(offer.commissionRate).toFixed(1)}% | 🔎 **Busca:** ${offer.keyword}`, `- 📊 **Qualidade:** ${offer.score}/100`, `- 🛒 [Abrir oferta](${offer.offerLink})`, '');
     fs.appendFileSync(env.GITHUB_STEP_SUMMARY, summary.join('\n') + '\n', 'utf8');
   }
   if (selected.length && env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) await publishTelegram(formatOffer(selected[0]));
