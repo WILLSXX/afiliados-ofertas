@@ -14,6 +14,22 @@ async function awinGet(path) {
   return data;
 }
 
+async function awinPost(path, body) {
+  if (!TOKEN) throw new Error('AWIN_API_TOKEN ainda não configurado.');
+  const response = await fetch(`${API_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${TOKEN}`
+    },
+    body: JSON.stringify(body)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(`Awin HTTP ${response.status}: ${JSON.stringify(data).slice(0, 300)}`);
+  return data;
+}
+
 export async function getPublisherInfo() {
   if (!TOKEN) return { configured: false, publishers: [], errors: ['AWIN_API_TOKEN ainda não configurado.'] };
   try {
@@ -38,7 +54,18 @@ export async function getProgrammes(publisherId) {
 
 export async function getOffers(publisherId) {
   if (!publisherId) throw new Error('AWIN_PUBLISHER_ID não encontrado.');
-  return awinGet(`/publisher/${encodeURIComponent(publisherId)}/promotions`);
+  return awinPost(`/publisher/${encodeURIComponent(publisherId)}/promotions`, {
+    filters: {
+      membership: 'joined',
+      regionCodes: [countryCode],
+      status: 'active',
+      type: 'all'
+    },
+    pagination: {
+      page: 1,
+      pageSize: 200
+    }
+  });
 }
 
 export async function discoverAwin() {
