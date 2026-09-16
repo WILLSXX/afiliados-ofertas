@@ -55,6 +55,7 @@ jobs:
       ML_MAX_CATEGORIES_PER_KEYWORD: 2
       ML_PROMOTION_CHECKS: 8
       AMAZON_MAX_OFFERS: 10
+      AWIN_LINK_BUILDER_LIMIT: 5
       SUB_ID: telegram,ofertas,tech
     steps:
       - name: Baixar projeto
