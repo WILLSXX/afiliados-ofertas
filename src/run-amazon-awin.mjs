@@ -19,6 +19,7 @@ function buildReport(amazon, awin) {
   lines.push(`- Promoções/vouchers consultados: ${awin.offers.length}`);
   lines.push(`- Ofertas de programas associados: ${awin.joinedOffers?.length ?? 0}`);
   lines.push(`- Promoções: ${awin.promotionOffers?.length ?? 0} | Vouchers: ${awin.voucherOffers?.length ?? 0}`);
+  lines.push(`- Links de tracking gerados: ${awin.trackingLinks?.generated ?? 0}/${awin.trackingLinks?.attempted ?? 0}`);
   if (awin.offers?.length) {
     lines.push('', '### Amostra das ofertas Awin');
     for (const [i, offer] of awin.offers.slice(0, 10).entries()) {
@@ -27,7 +28,7 @@ function buildReport(amazon, awin) {
       lines.push(`- **Tipo:** ${offer.type || '--'} | **Associado:** ${offer.joined ? 'SIM' : 'NÃO'}`);
       lines.push(`- **Validade:** ${offer.startDate || '--'} → ${offer.endDate || '--'}`);
       lines.push(`- **Cupom:** ${offer.voucher?.code || 'não disponível'}`);
-      lines.push(`- **Link de rastreamento:** ${offer.urlTracking || offer.url || '--'}`);
+      lines.push(`- **Link de rastreamento:** ${offer.affiliateTrackingUrl || offer.urlTracking || offer.url || '--'}`);
       lines.push('');
     }
   }
@@ -39,11 +40,11 @@ function buildReport(amazon, awin) {
 const amazon = await discoverAmazon();
 const awin = await discoverAwin();
 console.log(`Amazon: ${amazon.authenticated ? 'CONFIGURADA' : 'PENDENTE'} | ${amazon.offers.length} ofertas`);
-console.log(`Awin: ${awin.authenticated ? 'CONFIGURADA' : 'PENDENTE'} | ${awin.offers.length} ofertas | ${awin.joinedOffers?.length ?? 0} associadas | ${awin.promotionOffers?.length ?? 0} promoções | ${awin.voucherOffers?.length ?? 0} vouchers`);
+console.log(`Awin: ${awin.authenticated ? 'CONFIGURADA' : 'PENDENTE'} | ${awin.offers.length} ofertas | ${awin.joinedOffers?.length ?? 0} associadas | ${awin.promotionOffers?.length ?? 0} promoções | ${awin.voucherOffers?.length ?? 0} vouchers | tracking=${awin.trackingLinks?.generated ?? 0}/${awin.trackingLinks?.attempted ?? 0}`);
 if (amazon.offers.length) { console.log('\nPrimeira oferta Amazon:\n'); console.log(formatAmazon(amazon.offers[0])); }
 if (awin.offers.length) {
   console.log('\nPrimeiras ofertas Awin:');
-  for (const offer of awin.offers.slice(0, 5)) console.log(`- ${offer.advertiser?.name || '--'} | ${offer.type || '--'} | ${offer.title || '--'} | associado=${offer.joined ? 'sim' : 'não'}`);
+  for (const offer of awin.offers.slice(0, 5)) console.log(`- ${offer.advertiser?.name || '--'} | ${offer.type || '--'} | ${offer.title || '--'} | associado=${offer.joined ? 'sim' : 'não'} | tracking=${offer.affiliateTrackingUrl ? 'sim' : 'não'}`);
 }
 const report = buildReport(amazon, awin);
 fs.writeFileSync('ofertas-amazon-awin.md', report, 'utf8');
