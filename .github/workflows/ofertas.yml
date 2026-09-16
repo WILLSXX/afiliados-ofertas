@@ -38,13 +38,20 @@ jobs:
       KEYWORDS: celular,smart tv,notebook,ssd,memoria ram,monitor gamer,fone bluetooth,fone gamer,teclado mecanico,mouse gamer,placa de video,roteador wifi 6,power bank,furadeira,parafusadeira,impressora,air fryer,cafeteira,aspirador
       ML_KEYWORDS: celular,smart tv,notebook,ssd,memoria ram,monitor,fone bluetooth,roteador wifi 6,power bank,furadeira,parafusadeira,impressora,tablet,smartwatch,mouse gamer,teclado mecanico,placa de video,headset gamer,air fryer,cafeteira,aspirador
       AMAZON_KEYWORDS: celular,smart tv,notebook,ssd,memoria ram,monitor gamer,fone bluetooth,roteador,power bank
-      MIN_DISCOUNT: 10
+      MIN_DISCOUNT: 15
       MIN_RATING: 4.6
-      MIN_SALES: 100
+      MIN_SALES: 150
+      MIN_PRICE: 49.9
+      MIN_SCORE: 72
+      MIN_COMMISSION: 3
       MAX_OFFERS: 10
-      SHOPEE_MAX_PER_KEYWORD: 3
-      SHOPEE_MAX_PER_SHOP: 2
-      ML_MIN_DISCOUNT: 10
+      SHOPEE_MAX_PER_KEYWORD: 2
+      SHOPEE_MAX_PER_SHOP: 1
+      ML_MIN_DISCOUNT: 15
+      ML_MIN_PRICE: 49.9
+      ML_MIN_SCORE: 70
+      ML_MIN_SOLD: 20
+      ML_MAX_PER_SELLER: 1
       ML_MAX_OFFERS: 10
       ML_SEARCH_LIMIT: 40
       ML_DETAIL_CHECKS: 12
@@ -54,6 +61,9 @@ jobs:
       ML_HIGHLIGHT_LIMIT: 20
       ML_MAX_CATEGORIES_PER_KEYWORD: 2
       ML_PROMOTION_CHECKS: 8
+      AMAZON_MIN_DISCOUNT: 15
+      AMAZON_MIN_PRICE: 49.9
+      AMAZON_MIN_SCORE: 60
       AMAZON_MAX_OFFERS: 10
       AWIN_LINK_BUILDER_LIMIT: 5
       SUB_ID: telegram,ofertas,tech
