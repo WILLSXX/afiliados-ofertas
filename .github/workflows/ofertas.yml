@@ -17,11 +17,15 @@ concurrency:
 jobs:
   ofertas:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       SHOPEE_APP_ID: ${{ secrets.SHOPEE_APP_ID }}
       SHOPEE_SECRET: ${{ secrets.SHOPEE_SECRET }}
       ML_ACCESS_TOKEN: ${{ secrets.ML_ACCESS_TOKEN }}
+      ML_REFRESH_TOKEN: ${{ secrets.ML_REFRESH_TOKEN }}
+      ML_APP_ID: ${{ secrets.ML_APP_ID }}
+      ML_CLIENT_SECRET: ${{ secrets.ML_CLIENT_SECRET }}
+      GH_SECRETS_TOKEN: ${{ secrets.GH_SECRETS_TOKEN }}
       AWIN_API_TOKEN: ${{ secrets.AWIN_API_TOKEN }}
       AWIN_PUBLISHER_ID: ${{ secrets.AWIN_PUBLISHER_ID }}
       AMAZON_CLIENT_ID: ${{ secrets.AMAZON_CLIENT_ID }}
@@ -31,13 +35,15 @@ jobs:
       AMAZON_TOKEN_URL: ${{ secrets.AMAZON_TOKEN_URL }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      KEYWORDS: ssd,memoria ram,monitor gamer,fone bluetooth,roteador,teclado mecanico
-      ML_KEYWORDS: celular,smart tv,notebook,ssd,memoria ram,monitor,fone bluetooth,roteador,power bank,ferramentas,casa,moda,eletrodomesticos
+      KEYWORDS: celular,smart tv,notebook,ssd,memoria ram,monitor gamer,fone bluetooth,fone gamer,teclado mecanico,mouse gamer,placa de video,roteador wifi,power bank,ferramentas,impressora,air fryer,cafeteira,casa
+      ML_KEYWORDS: celular,smart tv,notebook,ssd,memoria ram,monitor,fone bluetooth,roteador,power bank,ferramentas,casa,moda,eletrodomesticos,impressora,tablet,smartwatch,mouse gamer,teclado mecanico,placa de video,headset gamer
       AMAZON_KEYWORDS: celular,smart tv,notebook,ssd,memoria ram,monitor gamer,fone bluetooth,roteador,power bank
       MIN_DISCOUNT: 0
       MIN_RATING: 4.5
       MIN_SALES: 50
-      MAX_OFFERS: 5
+      MAX_OFFERS: 10
+      SHOPEE_MAX_PER_KEYWORD: 3
+      SHOPEE_MAX_PER_SHOP: 2
       ML_MIN_DISCOUNT: 0
       ML_MAX_OFFERS: 10
       ML_SEARCH_LIMIT: 40
@@ -57,6 +63,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Renovar token do Mercado Livre automaticamente
+        continue-on-error: true
+        run: node src/refresh-mercadolivre-token.mjs
       - name: Diagnosticar API do Mercado Livre
         run: node src/diagnose-mercadolivre.mjs
       - name: Descobrir candidatos no Mercado Livre
