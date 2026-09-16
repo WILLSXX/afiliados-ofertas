@@ -3,6 +3,7 @@ const API_URL = 'https://api.awin.com';
 const TOKEN = env.AWIN_API_TOKEN || '';
 const PUBLISHER_ID = env.AWIN_PUBLISHER_ID || '';
 const countryCode = (env.AWIN_COUNTRY_CODE || 'BR').toUpperCase();
+const LINK_LIMIT = Math.max(0, Number(env.AWIN_LINK_BUILDER_LIMIT || 5));
 
 async function awinGet(path) {
   if (!TOKEN) throw new Error('AWIN_API_TOKEN ainda não configurado.');
@@ -71,6 +72,49 @@ export async function getOffers(publisherId) {
   }
   return { offers, errors, checks };
 }
+
+function advertiserIdOf(offer) {
+  return offer?.advertiser?.id ?? offer?.advertiserId ?? offer?.programId ?? null;
+}
+
+function destinationUrlOf(offer) {
+  const candidates = [offer?.url, offer?.destinationUrl, offer?.landingPageUrl, offer?.deeplink];
+  return candidates.find(value => typeof value === 'string' && /^https:\/\//i.test(value)) || '';
+}
+
+export async function generateTrackingLink(publisherId, offer) {
+  const advertiserId = advertiserIdOf(offer);
+  const destinationUrl = destinationUrlOf(offer);
+  if (!advertiserId) throw new Error('Advertiser ID não encontrado na oferta.');
+  if (!destinationUrl) throw new Error('URL de destino não encontrada na oferta.');
+  return awinPost(`/publishers/${encodeURIComponent(publisherId)}/linkbuilder/generate`, {
+    advertiserId: Number(advertiserId),
+    destinationUrl,
+    parameters: { clickref: 'ofertas' },
+    shorten: false
+  });
+}
+
+async function enrichTrackingLinks(publisherId, offers, errors) {
+  const candidates = offers.filter(offer => offer.joined && advertiserIdOf(offer) && destinationUrlOf(offer)).slice(0, LINK_LIMIT);
+  let generated = 0;
+  for (const offer of candidates) {
+    try {
+      const data = await generateTrackingLink(publisherId, offer);
+      const trackingUrl = data?.url || data?.trackingLink || '';
+      if (trackingUrl) {
+        offer.affiliateTrackingUrl = trackingUrl;
+        generated += 1;
+      } else {
+        errors.push(`Awin Link Builder ${advertiserIdOf(offer)}: resposta sem URL de tracking.`);
+      }
+    } catch (error) {
+      errors.push(`Awin Link Builder ${advertiserIdOf(offer)}: ${error.message}`);
+    }
+  }
+  return { attempted: candidates.length, generated };
+}
+
 export async function discoverAwin() {
   if (!TOKEN) return { authenticated: false, publisherId: null, publishers: [], programmes: [], offers: [], errors: ['Awin API ainda não configurada.'] };
   const errors = [];
@@ -89,6 +133,7 @@ export async function discoverAwin() {
     const status = String(p?.membership?.status ?? p?.status ?? p?.relationship ?? '').toLowerCase();
     return Boolean(p?.joined || p?.membership?.joined || ['joined','active'].includes(status));
   }).length;
+  const tracking = await enrichTrackingLinks(publisherId, normalizedOffers, errors);
   return {
     authenticated: true,
     publisherId,
@@ -99,6 +144,7 @@ export async function discoverAwin() {
     joinedOffers: normalizedOffers.filter(o => o.joined),
     voucherOffers: normalizedOffers.filter(o => String(o?.type || '').toLowerCase() === 'voucher'),
     promotionOffers: normalizedOffers.filter(o => String(o?.type || '').toLowerCase() === 'promotion'),
+    trackingLinks: tracking,
     errors,
     diagnostics: { queries: offerResult.checks, totalOffers: normalizedOffers.length, joinedOffers: normalizedOffers.filter(o => o.joined).length }
   };
