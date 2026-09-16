@@ -56,7 +56,7 @@ export async function getOffers(publisherId) {
   if (!publisherId) throw new Error('AWIN_PUBLISHER_ID não encontrado.');
   return awinPost(`/publisher/${encodeURIComponent(publisherId)}/promotions`, {
     filters: {
-      membership: 'joined',
+      membership: 'all',
       regionCodes: [countryCode],
       status: 'active',
       type: 'all'
