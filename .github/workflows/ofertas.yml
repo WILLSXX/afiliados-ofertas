@@ -49,7 +49,7 @@ jobs:
       SHOPEE_MAX_PER_SHOP: 1
       ML_MIN_DISCOUNT: 15
       ML_MIN_PRICE: 49.9
-      ML_MIN_SCORE: 70
+      ML_MIN_SCORE: 80
       ML_MIN_SOLD: 20
       ML_MAX_PER_SELLER: 1
       ML_MAX_OFFERS: 10
