@@ -4,29 +4,13 @@ const TOKEN_URL = env.AMAZON_TOKEN_URL || 'https://api.amazon.com/auth/o2/token'
 const MARKETPLACE = 'www.amazon.com.br';
 const PARTNER_TAG = env.AMAZON_PARTNER_TAG || '';
 const keywords = (env.AMAZON_KEYWORDS || env.KEYWORDS || 'ssd,memoria ram,monitor gamer,fone bluetooth,roteador,notebook,smart tv').split(',').map(s => s.trim()).filter(Boolean);
-const MIN_DISCOUNT = Number(env.AMAZON_MIN_DISCOUNT || 15);
-const MIN_PRICE = Number(env.AMAZON_MIN_PRICE || 49.9);
-const MIN_SCORE = Number(env.AMAZON_MIN_SCORE || 60);
+const MIN_DISCOUNT = Number(env.AMAZON_MIN_DISCOUNT || 1);
+const MIN_PRICE = Number(env.AMAZON_MIN_PRICE || 0);
 const MAX_OFFERS = Number(env.AMAZON_MAX_OFFERS || 10);
 
-const blockedTitlePatterns = [
-  /\b(capa|pel[ií]cula|case|suporte|adaptador|cabo|hub usb|mousepad)\b/i,
-  /\b(refil|cartucho|toner|reposi[cç][aã]o|pe[cç]a de reposi[cç][aã]o|somente a pe[cç]a)\b/i,
-  /\b(adesivo|chaveiro|enfeite|decora[cç][aã]o|boneco|brinquedo|miniatura)\b/i,
-  /\b(compat[ií]vel|para iphone|para celular|para notebook|para roteador|para tv)\b/i,
-  /\bkit\s+\d{2,}\b/i
+const blockedNonProductPatterns = [
+  /\b(servi[cç]o|curso|ebook|e-book|assinatura|software|licen[cç]a digital|arquivo digital)\b/i
 ];
-const requiredPatterns = {
-  ssd: /\b(ssd|nvme)\b/i,
-  'memoria ram': /\b(mem[óo]ria\s*(ram)?|ddr[2345])\b/i,
-  'monitor gamer': /\bmonitor\b/i,
-  'fone bluetooth': /\b(fone|earbuds?|headset)\b/i,
-  roteador: /\b(roteador|mesh|wi-?fi)\b/i,
-  notebook: /\b(notebook|laptop)\b/i,
-  'smart tv': /\b(smart\s*tv|televis[aã]o|tv)\b/i,
-  celular: /\b(celular|smartphone|iphone|galaxy|redmi|poco|motorola)\b/i,
-  'power bank': /\b(power\s*bank|carregador\s+port[aá]til|bateria\s+externa)\b/i
-};
 
 function money(value) {
   const n = Number(value);
@@ -66,35 +50,18 @@ function normalize(item, keyword) {
   const discount = basis && price && basis > price ? Math.round((1 - price / basis) * 100) : (saving && basis ? Math.round((saving / basis) * 100) : 0);
   return {
     keyword, asin: item.asin || '', title: item.itemInfo?.title?.displayValue || 'Produto Amazon', price,
-    originalPrice: basis, discount, image: item.images?.primary?.medium?.url || null, permalink: item.detailPageURL || null,
-    partnerTag: PARTNER_TAG, source: 'amazon_creators_api'
+    originalPrice: basis, discount, image: item.images?.primary?.medium?.url || null,
+    permalink: item.detailPageURL || null, partnerTag: PARTNER_TAG, source: 'amazon_creators_api'
   };
 }
-function score(item) {
-  const discount = Math.min(Math.max(Number(item.discount || 0), 0), 50);
-  const price = Number(item.price || 0);
-  const title = String(item.title || '');
-  const required = requiredPatterns[String(item.keyword || '').toLowerCase()];
-  let value = Math.min(45, discount * 0.95);
-  value += price >= 120 ? 10 : price >= 80 ? 8 : 4;
-  value += required?.test(title) ? 15 : -15;
-  if (/\b(samsung|apple|xiaomi|motorola|kingston|sandisk|corsair|logitech|razer|intel|amd|nvidia|philips|lg|electrolux|mondial|epson|canon|hp|acer|lenovo|asus|dell|tcl|jbl|edifier|wd|seagate)\b/i.test(title)) value += 6;
-  if (blockedTitlePatterns.some(rx => rx.test(title))) value -= 45;
-  return Math.max(0, Math.min(100, Math.round(value)));
-}
 function eligible(item) {
-  if (!item.asin || !item.permalink || !Number.isFinite(item.price) || item.price < MIN_PRICE) return false;
-  if (item.discount < MIN_DISCOUNT) return false;
-  const title = String(item.title || '');
-  if (title.length < 20 || blockedTitlePatterns.some(rx => rx.test(title))) return false;
-  const required = requiredPatterns[String(item.keyword || '').toLowerCase()];
-  if (required && !required.test(title)) return false;
-  return score(item) >= MIN_SCORE;
+  return Boolean(item.asin && item.permalink && Number.isFinite(item.price) && item.price >= MIN_PRICE && item.discount >= MIN_DISCOUNT &&
+    String(item.title || '').length >= 8 && !blockedNonProductPatterns.some(rx => rx.test(item.title)));
 }
 function titleKey(title) {
   return String(title || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/\b(novo|original|oferta|frete gratis|menor preco|imperdivel)\b/g, '')
-    .replace(/[^a-z0-9]+/g, ' ').trim().split(' ').slice(0, 9).join(' ');
+    .replace(/[^a-z0-9]+/g, ' ').trim().split(' ').slice(0, 10).join(' ');
 }
 export async function discoverAmazon() {
   const errors = [];
@@ -106,23 +73,21 @@ export async function discoverAmazon() {
     for (const keyword of keywords) {
       try {
         const items = await searchItems(token, keyword);
-        for (const item of items) {
+        for (const raw of items) {
           stats.candidates++;
-          const normalized = normalize(item, keyword);
-          if (eligible(normalized)) collected.push({ ...normalized, score: score(normalized) });
+          const item = normalize(raw, keyword);
+          if (eligible(item)) collected.push(item);
           else stats.rejected++;
         }
       } catch (error) { errors.push(`Amazon (${keyword}): ${error.message}`); }
     }
-    const ranked = [...new Map(collected.map(x => [x.asin, x])).values()]
-      .sort((a, b) => b.score - a.score || b.discount - a.discount || a.price - b.price);
     const unique = [];
-    const titles = new Set();
-    for (const item of ranked) {
+    const seen = new Set();
+    for (const item of collected.sort((a, b) => b.discount - a.discount || a.price - b.price)) {
+      if (seen.has(item.asin)) continue;
       const key = titleKey(item.title);
-      if (key && titles.has(key)) { stats.duplicates++; continue; }
-      if (key) titles.add(key);
-      unique.push(item);
+      if (key && unique.some(existing => titleKey(existing.title) === key)) { stats.duplicates++; continue; }
+      seen.add(item.asin); unique.push({ ...item, score: Math.min(100, item.discount) });
     }
     stats.accepted = unique.length;
     return { authenticated: true, offers: unique.slice(0, MAX_OFFERS), errors, keywords, stats };
@@ -132,6 +97,5 @@ export async function discoverAmazon() {
 }
 export function formatAmazon(item) {
   const oldPrice = item.originalPrice ? `De ${money(item.originalPrice)} por ` : '';
-  const discount = item.discount ? ` | ${item.discount}% OFF` : '';
-  return `🔥 ${item.title}\n\n💰 ${oldPrice}${money(item.price)}${discount}\n\n🛒 COMPRAR AGORA:\n${item.permalink}\n\n⚠️ Preço, estoque e oferta podem mudar sem aviso.`;
+  return `🔥 ${item.title}\n\n💰 ${oldPrice}${money(item.price)} | ${item.discount}% OFF\n\n🛒 COMPRAR AGORA:\n${item.permalink}\n\n⚠️ Preço, estoque e oferta podem mudar sem aviso.`;
 }
