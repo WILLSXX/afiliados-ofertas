@@ -90,15 +90,17 @@ async function shopeeRequest(query) {
 }
 async function getProducts(keyword) {
   const safeKeyword = JSON.stringify(keyword);
-  const query = `query { productOfferV2(keyword: ${safeKeyword}, listType: 0, sortType: 5, page: 1, limit: 60) { nodes { itemId productName productLink offerLink imageUrl priceMin priceMax priceDiscountRate sales ratingStar commissionRate commission shopId shopName shopType } pageInfo { page limit hasNextPage } } }`;
+  const query = `query { productOfferV2(keyword: ${safeKeyword}, listType: 0, sortType: 5, page: 1, limit: 50) { nodes { itemId productName productLink offerLink imageUrl priceMin priceMax priceDiscountRate sales ratingStar commissionRate commission shopId shopName shopType } pageInfo { page limit hasNextPage } } }`;
   const data = await shopeeRequest(query);
   return data.productOfferV2?.nodes || [];
 }
 function titleQuality(p) {
-  const title = String(p.productName || '').trim();
+  const title = String(p.productName || '').replace(/\s+/g, ' ').trim();
   const keyword = String(p.keyword || '').toLowerCase();
+  const commaCount = (title.match(/,/g) || []).length;
   if (title.length < 20) return -4;
   if (blockedTitlePatterns.some(rx => rx.test(title))) return -35;
+  if (commaCount >= 2) return -25;
   const required = requiredPatterns[keyword];
   if (required && !required.test(title)) return -18;
   let bonus = 0;
@@ -133,6 +135,7 @@ function eligible(p) {
   if (discount < MIN_DISCOUNT || rating < MIN_RATING || sales < MIN_SALES) return false;
   if (price < MIN_PRICE || commission < MIN_COMMISSION) return false;
   if (blockedTitlePatterns.some(rx => rx.test(title))) return false;
+  if ((title.match(/,/g) || []).length >= 2) return false;
   const keyword = String(p.keyword || '').toLowerCase();
   if (requiredPatterns[keyword] && !requiredPatterns[keyword].test(title)) return false;
   return score(p) >= MIN_SCORE;
