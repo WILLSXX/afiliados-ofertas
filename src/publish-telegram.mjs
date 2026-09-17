@@ -31,8 +31,7 @@ function telegramText(source, offer) {
   const couponPct = offer.couponPercentage ? `\n🎟️ Cupom: ${offer.couponPercentage}% OFF` : '';
   const couponAmount = offer.couponAmount ? `\n🎟️ Cupom: ${money(offer.couponAmount)} OFF` : '';
   const link = offer.offerLink || offer.permalink || offer.affiliateTrackingUrl || offer.urlTracking || '';
-  const oldPrice = offer.originalPrice ? `\n🏷️ De: ${money(offer.originalPrice)}` : '';
-  return `🔥 ${source} — OFERTA\n\n${title}\n\n💰 ${oldPrice ? oldPrice + '\n' : ''}Por ${price}${discount > 0 ? ` | ${Math.round(discount)}% OFF` : ''}${coupon}${couponPct}${couponAmount}\n\n🛒 COMPRAR AGORA:\n${link}\n\n⚠️ Preço, estoque e promoção podem mudar sem aviso.`;
+  return `🔥 ${source} — OFERTA\n\n${title}\n\n💰 ${price}${discount > 0 ? ` | ${Math.round(discount)}% OFF` : ''}${coupon}${couponPct}${couponAmount}\n\n🛒 COMPRAR AGORA:\n${link}\n\n⚠️ Preço, estoque e promoção podem mudar sem aviso.`;
 }
 async function telegramSend(text) {
   const response = await fetch(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
@@ -43,8 +42,6 @@ async function telegramSend(text) {
   if (!response.ok || !data.ok) throw new Error(`Telegram HTTP ${response.status}: ${JSON.stringify(data).slice(0, 300)}`);
 }
 async function loadState() {
-  const local = readJson(STATE_PATH);
-  if (local?.sent) return { state: local, sha: null };
   if (REPO && GH_TOKEN) {
     try {
       const response = await fetch(`https://api.github.com/repos/${REPO}/contents/${STATE_PATH}?ref=${encodeURIComponent(REF)}`, {
@@ -57,7 +54,8 @@ async function loadState() {
       }
     } catch {}
   }
-  return { state: { version: 1, sent: {} }, sha: null };
+  const local = readJson(STATE_PATH);
+  return { state: local?.sent ? local : { version: 1, sent: {} }, sha: null };
 }
 function prune(state) {
   const cutoff = Date.now() - STATE_TTL_DAYS * 86400000;
