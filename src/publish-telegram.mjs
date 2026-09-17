@@ -30,7 +30,7 @@ function telegramText(source, offer) {
   const coupon = offer.couponCode ? `\n🎟️ Cupom: ${offer.couponCode}` : '';
   const couponPct = offer.couponPercentage ? `\n🎟️ Cupom: ${offer.couponPercentage}% OFF` : '';
   const couponAmount = offer.couponAmount ? `\n🎟️ Cupom: ${money(offer.couponAmount)} OFF` : '';
-  const link = offer.offerLink || offer.permalink || offer.affiliateTrackingUrl || offer.urlTracking || '';
+  const link = offer.offerLink || offer.permalink || '';
   return `🔥 ${source} — OFERTA\n\n${title}\n\n💰 ${price}${discount > 0 ? ` | ${Math.round(discount)}% OFF` : ''}${coupon}${couponPct}${couponAmount}\n\n🛒 COMPRAR AGORA:\n${link}\n\n⚠️ Preço, estoque e promoção podem mudar sem aviso.`;
 }
 async function telegramSend(text) {
@@ -86,18 +86,10 @@ function collectOffers() {
   for (const offer of shopee?.offers || []) result.push({
     source: 'Shopee', id: `shopee:${offer.itemId}:${Math.round(Number(offer.priceDiscountRate || 0))}`, offer
   });
-  const amazonAwin = readJson('ofertas-amazon-awin.json');
-  for (const offer of amazonAwin?.amazon?.offers || []) if (offer.permalink) result.push({
+  const amazon = readJson('ofertas-amazon-awin.json');
+  for (const offer of amazon?.amazon?.offers || []) if (offer.permalink) result.push({
     source: 'Amazon', id: `amazon:${offer.asin}:${Math.round(Number(offer.discount || 0))}`, offer
   });
-  for (const offer of amazonAwin?.awin?.offers || []) {
-    const link = offer.affiliateTrackingUrl || offer.urlTracking;
-    if (link) result.push({
-      source: `Awin — ${offer.advertiser?.name || 'Programa'}`,
-      id: `awin:${offer.id || offer.title || link}`,
-      offer: { ...offer, affiliateTrackingUrl: link }
-    });
-  }
   return result;
 }
 
