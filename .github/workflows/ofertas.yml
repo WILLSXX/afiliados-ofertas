@@ -3,12 +3,14 @@ name: Buscar ofertas
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'data/telegram-sent.json'
   workflow_dispatch:
   schedule:
     - cron: '17 * * * *'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ofertas-automaticas
@@ -38,34 +40,37 @@ jobs:
       KEYWORDS: celular,smart tv,notebook,ssd,memoria ram,monitor gamer,fone bluetooth,fone gamer,teclado mecanico,mouse gamer,placa de video,roteador wifi 6,power bank,furadeira,parafusadeira,impressora,air fryer,cafeteira,aspirador
       ML_KEYWORDS: celular,smart tv,notebook,ssd,memoria ram,monitor,fone bluetooth,roteador wifi 6,power bank,furadeira,parafusadeira,impressora,tablet,smartwatch,mouse gamer,teclado mecanico,placa de video,headset gamer,air fryer,cafeteira,aspirador
       AMAZON_KEYWORDS: celular,smart tv,notebook,ssd,memoria ram,monitor gamer,fone bluetooth,roteador,power bank
-      MIN_DISCOUNT: 15
-      MIN_RATING: 4.6
-      MIN_SALES: 150
-      MIN_PRICE: 49.9
-      MIN_SCORE: 72
-      MIN_COMMISSION: 3
+      MIN_DISCOUNT: 1
+      MIN_RATING: 0
+      MIN_SALES: 0
+      MIN_PRICE: 0
+      MIN_SCORE: 0
+      MIN_COMMISSION: 0
       MAX_OFFERS: 10
       SHOPEE_MAX_PER_KEYWORD: 2
-      SHOPEE_MAX_PER_SHOP: 1
-      ML_MIN_DISCOUNT: 15
-      ML_MIN_PRICE: 49.9
-      ML_MIN_SCORE: 80
-      ML_MIN_SOLD: 20
-      ML_MAX_PER_SELLER: 1
+      SHOPEE_MAX_PER_SHOP: 2
+      ML_MIN_DISCOUNT: 1
+      ML_MIN_PRICE: 0
+      ML_MIN_SCORE: 0
+      ML_MIN_SOLD: 0
+      ML_MAX_PER_SELLER: 2
       ML_MAX_OFFERS: 10
       ML_SEARCH_LIMIT: 40
       ML_DETAIL_CHECKS: 12
       ML_CATALOG_LIMIT: 5
-      ML_ITEM_LIMIT: 100
+      ML_ITEM_LIMIT: 20
       ML_PROMOTION_CHECKS_PER_PRODUCT: 2
       ML_HIGHLIGHT_LIMIT: 20
       ML_MAX_CATEGORIES_PER_KEYWORD: 2
       ML_PROMOTION_CHECKS: 8
-      AMAZON_MIN_DISCOUNT: 15
-      AMAZON_MIN_PRICE: 49.9
-      AMAZON_MIN_SCORE: 60
+      AMAZON_MIN_DISCOUNT: 1
+      AMAZON_MIN_PRICE: 0
+      AMAZON_MIN_SCORE: 0
       AMAZON_MAX_OFFERS: 10
       AWIN_LINK_BUILDER_LIMIT: 5
+      TELEGRAM_MAX_SEND: 5
+      TELEGRAM_STATE_LIMIT: 2000
+      TELEGRAM_STATE_TTL_DAYS: 14
       SUB_ID: telegram,ofertas,tech
     steps:
       - name: Baixar projeto
@@ -85,6 +90,8 @@ jobs:
         run: node src/index.mjs
       - name: Buscar ofertas Amazon e Awin
         run: node src/run-amazon-awin.mjs
+      - name: Enviar novas ofertas ao Telegram
+        run: node src/publish-telegram.mjs
       - name: Guardar relatórios
         uses: actions/upload-artifact@v4
         with:
