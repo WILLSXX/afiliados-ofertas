@@ -37,6 +37,7 @@ jobs:
       AMAZON_TOKEN_URL: ${{ secrets.AMAZON_TOKEN_URL }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      GITHUB_TOKEN: ${{ github.token }}
       KEYWORDS: celular,smart tv,notebook,ssd,memoria ram,monitor gamer,fone bluetooth,fone gamer,teclado mecanico,mouse gamer,placa de video,roteador wifi 6,power bank,furadeira,parafusadeira,impressora,air fryer,cafeteira,aspirador
       ML_KEYWORDS: celular,smart tv,notebook,ssd,memoria ram,monitor,fone bluetooth,roteador wifi 6,power bank,furadeira,parafusadeira,impressora,tablet,smartwatch,mouse gamer,teclado mecanico,placa de video,headset gamer,air fryer,cafeteira,aspirador
       AMAZON_KEYWORDS: celular,smart tv,notebook,ssd,memoria ram,monitor gamer,fone bluetooth,roteador,power bank
