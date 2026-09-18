@@ -12,8 +12,8 @@ const STATE_LIMIT = Number(env.TELEGRAM_STATE_LIMIT || 2000);
 const STATE_TTL_DAYS = Number(env.TELEGRAM_STATE_TTL_DAYS || 14);
 
 if (!TOKEN || !CHAT_ID) {
-  console.log('Telegram não configurado. Nenhuma mensagem será enviada.');
-  process.exit(0);
+  console.error('Telegram não configurado. Defina TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID nos Secrets do GitHub.');
+  process.exit(1);
 }
 
 function readJson(path) {
