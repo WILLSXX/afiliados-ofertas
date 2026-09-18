@@ -84,11 +84,11 @@ function collectOffers() {
   const result = [];
   const shopee = readJson('ofertas-shopee.json');
   for (const offer of shopee?.offers || []) result.push({
-    source: 'Shopee', id: `shopee:${offer.itemId}:${Math.round(Number(offer.priceDiscountRate || 0))}`, offer
+    source: 'Shopee', id: `shopee:${offer.itemId}`, offer
   });
   const amazon = readJson('ofertas-amazon-awin.json');
   for (const offer of amazon?.amazon?.offers || []) if (offer.permalink) result.push({
-    source: 'Amazon', id: `amazon:${offer.asin}:${Math.round(Number(offer.discount || 0))}`, offer
+    source: 'Amazon', id: `amazon:${offer.asin}`, offer
   });
   return result;
 }
