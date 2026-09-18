@@ -36,7 +36,7 @@ function telegramText(source, offer) {
 async function telegramSend(text) {
   const response = await fetch(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: CHAT_ID, text, disable_web_page_preview: false })
+    body: JSON.stringify({ chat_id: CHAT_ID, text, disable_web_page_preview: true })
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || !data.ok) throw new Error(`Telegram HTTP ${response.status}: ${JSON.stringify(data).slice(0, 300)}`);
@@ -96,7 +96,25 @@ function collectOffers() {
 const loaded = await loadState();
 const state = prune(loaded.state);
 const candidates = collectOffers();
-const pending = candidates.filter(item => !state.sent[item.id]).slice(0, MAX_SEND);
+const seenRun = new Set();
+const pending = [];
+for (const item of candidates) {
+  const titleKey = String(item.offer?.title || item.offer?.productName || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(' ')
+    .slice(0, 12)
+    .join(' ');
+  const dedupeKey = titleKey ? `${item.source}:${titleKey}` : item.id;
+  if (seenRun.has(dedupeKey)) continue;
+  seenRun.add(dedupeKey);
+  if (state.sent[item.id]) continue;
+  pending.push(item);
+  if (pending.length >= MAX_SEND) break;
+}
 console.log(`Ofertas encontradas para envio: ${candidates.length}; novas: ${pending.length}.`);
 
 for (const item of pending) {
