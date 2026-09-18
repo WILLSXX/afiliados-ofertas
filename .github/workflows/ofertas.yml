@@ -47,7 +47,7 @@ jobs:
       MIN_PRICE: 0
       MIN_SCORE: 0
       MIN_COMMISSION: 0
-      MAX_OFFERS: 10
+      MAX_OFFERS: 30
       SHOPEE_MAX_PER_KEYWORD: 2
       SHOPEE_MAX_PER_SHOP: 2
       ML_MIN_DISCOUNT: 1
